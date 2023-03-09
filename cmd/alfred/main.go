@@ -3,9 +3,13 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
+	"os"
+	"os/signal"
+	"path"
 	"strconv"
+	"sync"
+	"time"
 
 	"cpqd.com.br/alfred/internal/catalog"
 	"cpqd.com.br/alfred/internal/publisher"
@@ -13,8 +17,28 @@ import (
 
 const max_upload_size = 10 * 1024 * 1024
 
+const server_version = "Alfred 1.0"
+
+var context *publisher.Publisher
+var busy sync.Mutex
+
 type ErrorInfo struct {
 	Message string `json:"message"`
+}
+
+func write_json(obj any, w http.ResponseWriter) error {
+	data, err := json.Marshal(obj)
+	if err != nil {
+		return err
+	}
+	w.Write(data)
+	return nil
+}
+
+func send_object(status int, obj any, w http.ResponseWriter) error {
+	w.Header().Set("Server", server_version)
+	w.WriteHeader(status)
+	return write_json(obj, w)
 }
 
 func send_error(status int, message string, w http.ResponseWriter) {
@@ -22,6 +46,7 @@ func send_error(status int, message string, w http.ResponseWriter) {
 	if err != nil {
 		data = make([]byte, 0)
 	}
+	w.Header().Set("Server", server_version)
 	http.Error(w, string(data), status)
 }
 
@@ -42,43 +67,92 @@ func publish_handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	info := publisher.PublishParams{
-		Name:     r.URL.Query().Get("product"),
-		Version:  catalog.Version(r.URL.Query().Get("version")),
-		Language: r.URL.Query().Get("lang"),
-		Type:     catalog.VariantType(r.URL.Query().Get("type")),
-	}
-	if !info.IsValid() {
-		send_error(400, "Invalid arguments", w)
+	version, err := catalog.ParseVersion(r.URL.Query().Get("version"))
+	if err != nil {
+		send_error(400, "Invalid semantic version", w)
 		return
 	}
-	fmt.Println(info)
-	err = publisher.Publish(defaultProd, info, r.Body)
+
+	pub := catalog.Publication{
+		Product:      r.URL.Query().Get("product"),
+		Version:      version,
+		ShortVersion: version.GetShortVersion(),
+		Format:       catalog.FormatType(r.URL.Query().Get("type")),
+		Language:     catalog.Language(r.URL.Query().Get("lang")),
+		Date:         time.Now(),
+	}
+
+	if err := pub.Validate(); err != nil {
+		send_error(400, err.Error(), w)
+		return
+	}
+
+	// start of critical region
+	busy.Lock()
+	defer busy.Unlock()
+
+	// publish the resource
+	summary, err := publisher.Publish(defaultProd, &pub, r.Body)
 	if err != nil {
 		send_error(400, err.Error(), w)
 		return
 	}
-	/*outFile, _ := os.Create("/tmp/ppp")
-	io.Copy(outFile, r.Body)
-	outFile.Close()*/
+	// update catalog
+	context.Catalog.AddPublication(&pub)
+	context.Save()
 
-}
-
-func progress_handler(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintf(w, "Hi there, I love %s!", r.URL.Path[1:])
+	send_object(http.StatusOK, summary, w)
 }
 
 func enumerate_handler(w http.ResponseWriter, r *http.Request) {
+	type Result struct {
+		Name   string `json:"name"`
+		Latest string `json:"ver"`
+	}
+	entries := make(map[string]*Result, 0)
+
+	for _, entry := range context.Catalog.Products {
+		entries[entry.Name] = &Result{Name: entry.Name, Latest: entry.Latest.ToString()}
+	}
+
+	send_object(200, entries, w)
+}
+
+func enumerate_product_handler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "Hi there, I love %s!", r.URL.Path[1:])
 }
 
 var defaultProd = "/tmp/alfred/prod" // default path for production
 var defaultTest = "/tmp/alfred/test" // default path for testing
+var server_done = make(chan int)
+var server *http.Server
+
+func install_signal_hook() {
+	c := make(chan os.Signal)
+	signal.Notify(c, os.Interrupt)
+	go func() {
+		<-c
+		server.Shutdown(nil)
+		server_done <- 1
+	}()
+}
 
 func main() {
-	server := http.NewServeMux()
-	server.HandleFunc("/v1/publish", publish_handler)
-	server.HandleFunc("/v1/progress", progress_handler)
-	server.HandleFunc("/v1/enumerate", enumerate_handler)
-	log.Fatal(http.ListenAndServe(":8080", server))
+	install_signal_hook()
+	var err error
+	context, err = publisher.NewPublisher(path.Join(defaultProd, "catalog.json"))
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/publish", publish_handler)
+	mux.HandleFunc("/v1/enumerate", enumerate_handler)
+	mux.HandleFunc("/v1/enumerate/{product}", enumerate_product_handler)
+	server = &http.Server{Addr: ":8080", Handler: mux}
+	server.ListenAndServe()
+	select {
+	case <-server_done:
+	}
+	context.Save()
 }

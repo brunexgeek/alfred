@@ -1,68 +1,243 @@
 package catalog
 
-import "regexp"
+import (
+	"encoding/json"
+	"fmt"
+	"hash/fnv"
+	"hash/maphash"
+	"io"
+	"os"
+	"path"
+	"regexp"
+	"strconv"
+	"strings"
+	"time"
+)
 
 type Catalog struct {
-	Products []Product
+	Products     map[string]*Product `json:"-"`
+	Publications []*Publication      `json:"pubs,omitempty"`
+	seed         maphash.Seed        `json:"-"`
 }
 
 type Product struct {
-	Name     string  // unique product name (lowercase)
-	Latest   Version // latest version in semantic version format
-	Releases []Release
+	Name         string  // unique product name (lowercase)
+	Latest       Version // latest version in semantic version format
+	Publications []*Publication
 }
 
-type Release struct {
-	ShortVersion string  // only major and minor
-	Version      Version // complete semantic version
-	Variants     []Variant
+type Publication struct {
+	Product      string     `json:"prod"` // unique product name (lowercase)
+	ShortVersion Version    `json:"sver"` // only major and minor
+	Version      Version    `json:"ver"`  // complete semantic version
+	Format       FormatType `json:"fmt"`
+	Language     Language   `json:"lang"`
+	Date         time.Time  `json:"date"`
+	hash         uint64     `json:"-"`
 }
 
-type Version string
+func (c *Catalog) add_product(pub *Publication) {
+	result := c.Products[pub.Product]
+	if result == nil {
+		result = &Product{Name: pub.Product}
+		c.Products[pub.Product] = result
+	}
+	if pub.Version.Newer(result.Latest) {
+		result.Latest = pub.Version
+	}
+
+}
+
+func (p Publication) Validate() error {
+	if name_re == nil || !name_re.MatchString(p.Product) {
+		return fmt.Errorf("Invalid product name")
+	}
+	if p.Language != "pt" && p.Language != "en" && p.Language != "es" {
+		return fmt.Errorf("Unsupported language")
+	}
+	if !p.Format.IsValid() {
+		return fmt.Errorf("Unsupported format")
+	}
+	if !p.Version.IsFull() {
+		return fmt.Errorf("Incomplete or invalid semantic version")
+	}
+	return nil
+}
+
+type Version struct {
+	Major int
+	Minor int
+	Fix   int
+}
+
+var name_re, _ = regexp.Compile("^[a-z][a-z_-]+$")
+var full_re, _ = regexp.Compile("^[0-9]+\\.[0-9]+\\.[0-9]+$")
+var short_re, _ = regexp.Compile("^[0-9]+\\.[0-9]+$")
+var cut_re, _ = regexp.Compile("^[0-9]+\\.[0-9]+")
+
+func ParseVersion(value string) (Version, error) {
+	if !IsValid(value) {
+		return Version{}, fmt.Errorf("Invalid semantic version")
+	}
+	parts := strings.Split(value, ".")
+	result := Version{}
+	result.Major, _ = strconv.Atoi(parts[0])
+	result.Minor, _ = strconv.Atoi(parts[1])
+	if len(parts) == 3 {
+		result.Fix, _ = strconv.Atoi(parts[2])
+	}
+	return result, nil
+}
 
 func (v Version) IsFull() bool {
-	re, err := regexp.Compile("^[0-9]+\\.[0-9]+\\.[0-9]+$")
-	return err == nil && re.MatchString(string(v))
+	return v.Major >= 0 && v.Minor >= 0 && v.Fix >= 0
 }
 
 func (v Version) IsShort() bool {
-	re, err := regexp.Compile("^[0-9]+\\.[0-9]+\\.[0-9]+$")
-	return err == nil && re.MatchString(string(v))
+	return v.Major >= 0 && v.Minor >= 0 && v.Fix == -1
 }
 
 func (v Version) IsValid() bool {
 	return v.IsShort() || v.IsFull()
 }
 
-type VariantType string
+func IsFull(v string) bool {
+	return full_re != nil && full_re.MatchString(v)
+}
+
+func IsShort(v string) bool {
+	return short_re != nil && short_re.MatchString(v)
+}
+
+func IsValid(v string) bool {
+	return IsShort(v) || IsFull(v)
+}
+
+func (v Version) GetShortVersion() Version {
+	if v.IsFull() {
+		return Version{Major: v.Major, Minor: v.Minor, Fix: -1}
+	} else {
+		return v
+	}
+}
+
+func (v Version) ToString() string {
+	if v.Fix < 0 {
+		return fmt.Sprintf("%d.%d", v.Major, v.Minor)
+	} else {
+		return fmt.Sprintf("%d.%d.%d", v.Major, v.Minor, v.Fix)
+	}
+}
+
+func (v Version) Newer(o Version) bool {
+	if v.Fix < 0 {
+		v.Fix = 0
+	}
+	if o.Fix < 0 {
+		o.Fix = 0
+	}
+	return v.Major > o.Major || v.Minor > o.Minor || v.Fix > o.Fix
+}
+
+type FormatType string
 
 const (
-	HTML VariantType = "html"
-	PDF  VariantType = "pdf"
-	TGZ  VariantType = "tgz"
+	HTML FormatType = "html"
+	PDF  FormatType = "pdf"
+	TGZ  FormatType = "tgz"
 )
 
-func (v VariantType) IsValid() bool {
+func (v FormatType) IsValid() bool {
 	return v == HTML || v == PDF || v == TGZ
 }
 
-type Variant struct {
-	Type  VariantType
-	Files []File
+type Language string
+
+const (
+	PT Language = "pt"
+	ES Language = "es"
+	EN Language = "enz"
+)
+
+func Open(fpath string) (*Catalog, error) {
+	output := &Catalog{seed: maphash.MakeSeed(), Products: make(map[string]*Product)}
+
+	info, err := os.Stat(fpath)
+	if err != nil {
+		return output, nil
+	} else if info.IsDir() {
+		return nil, fmt.Errorf("'%s' must be a regular file", fpath)
+	}
+
+	file, err := os.OpenFile(fpath, os.O_RDONLY, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	data, err := io.ReadAll(file)
+	if err != nil {
+		return nil, err
+	}
+
+	err = json.Unmarshal(data, &output)
+	if err != nil {
+		return nil, err
+	}
+
+	return output, nil
 }
 
-type Language struct {
-}
+func (c *Catalog) Save(fpath string) error {
+	data, err := json.Marshal(c)
+	if err != nil {
+		return err
+	}
 
-type File struct {
-	Path string // path relative to variant directory
+	file, err := os.OpenFile(fpath, os.O_RDWR|os.O_CREATE, 0755)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
 
-}
-
-func Open(path string) (*Catalog, error) {
-	return nil, nil
-}
-
-func (c *Catalog) Save() error {
+	_, err = file.Write(data)
+	if err != nil {
+		return err
+	}
 	return nil
+}
+
+func (p *Publication) MetaPath() string {
+	return path.Join(p.Product, string(p.Format))
+}
+
+func (p *Publication) DataPath() string {
+	return path.Join(p.Product, string(p.Format), p.ShortVersion.ToString(), string(p.Language))
+}
+
+func (p *Publication) Hash() uint64 {
+	if p.hash != 0 {
+		return p.hash
+	}
+	h := fnv.New64a()
+	h.Write([]byte(p.Product))
+	h.Write([]byte(p.Format))
+	h.Write([]byte(p.Language))
+	h.Write([]byte(p.Version.ToString()))
+	p.hash = h.Sum64()
+	return p.hash
+}
+
+func (c *Catalog) AddPublication(pub *Publication) {
+	hash := pub.Hash()
+
+	for i, item := range c.Publications {
+		if item.Hash() == hash {
+			c.Publications[i] = pub
+			return
+		}
+	}
+
+	c.Publications = append(c.Publications, pub)
+	c.add_product(pub)
 }
