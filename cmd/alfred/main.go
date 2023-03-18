@@ -7,7 +7,9 @@ import (
 	"os"
 	"os/signal"
 	"path"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -18,8 +20,9 @@ import (
 const max_upload_size = 10 * 1024 * 1024
 
 const server_version = "Alfred 1.0"
+const PUBLISH_ENDPOINT = "/v1/publish/"
+const ENUMERATE_ENDPOINT = "/v1/enumerate/"
 
-var context *publisher.Publisher
 var busy sync.Mutex
 
 type ErrorInfo struct {
@@ -50,7 +53,24 @@ func send_error(status int, message string, w http.ResponseWriter) {
 	http.Error(w, string(data), status)
 }
 
+func extract_context(path string, endpoint string) string {
+	if !strings.HasSuffix(endpoint, "/") {
+		endpoint = endpoint + "/"
+	}
+	if !strings.HasPrefix(path, endpoint) {
+		return ""
+	}
+	return path[len(endpoint):]
+}
+
 func publish_handler(w http.ResponseWriter, r *http.Request) {
+	cname := extract_context(r.URL.Path, PUBLISH_ENDPOINT)
+	context, ok := environments[cname]
+	if len(cname) == 0 || !ok {
+		send_error(400, "Unkown environment", w)
+		return
+	}
+
 	if r.Method != "POST" {
 		send_error(400, "Unsupported method", w)
 		return
@@ -105,6 +125,13 @@ func publish_handler(w http.ResponseWriter, r *http.Request) {
 }
 
 func enumerate_handler(w http.ResponseWriter, r *http.Request) {
+	cname := strings.TrimPrefix(r.URL.Path, ENUMERATE_ENDPOINT)
+	context, ok := environments[cname]
+	if !ok {
+		send_error(400, "Unkown environment", w)
+		return
+	}
+
 	type Result struct {
 		Name   string `json:"name"`
 		Latest string `json:"ver"`
@@ -137,22 +164,47 @@ func install_signal_hook() {
 	}()
 }
 
+func load_configuration() (*Config, error) {
+	tmp, err := filepath.Abs(filepath.Dir(os.Args[0]))
+	if err != nil {
+		return nil, err
+	}
+	cpath := path.Join(tmp, "config.json")
+	fmt.Printf("Loading configuration from '%s'\n", cpath)
+	return OpenConfiguration(cpath)
+}
+
+var environments = make(map[string]*publisher.Publisher)
+
 func main() {
 	install_signal_hook()
-	var err error
-	context, err = publisher.NewPublisher(path.Join(defaultProd, "catalog.json"))
+
+	config, err := load_configuration()
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(1)
 	}
+
+	for _, entry := range config.Environments {
+		context, err := publisher.NewPublisher(path.Join(entry.Path, "catalog.json"))
+		if err != nil {
+			fmt.Println(err)
+			os.Exit(1)
+		}
+		environments[entry.Name] = context
+		fmt.Printf("Initialized environment '%s' at '%s'\n", entry.Name, entry.Path)
+	}
+
 	mux := http.NewServeMux()
-	mux.HandleFunc("/v1/publish", publish_handler)
-	mux.HandleFunc("/v1/enumerate", enumerate_handler)
-	mux.HandleFunc("/v1/enumerate/{product}", enumerate_product_handler)
-	server = &http.Server{Addr: ":8080", Handler: mux}
+	mux.HandleFunc(PUBLISH_ENDPOINT, publish_handler)
+	mux.HandleFunc(ENUMERATE_ENDPOINT, enumerate_handler)
+	server = &http.Server{Addr: fmt.Sprintf("%s:%d", config.Manager.Host, config.Manager.Port), Handler: mux}
 	server.ListenAndServe()
 	select {
 	case <-server_done:
 	}
-	context.Save()
+
+	for _, context := range environments {
+		context.Save()
+	}
 }
