@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Alfred - Publicação de documentos</title>
+    <link
+      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css"
+      rel="stylesheet"
+      integrity="sha384-GLhlTQ8iRABdZLl6O3oVMWSktQOp6b7In1Zl3/Jr59b6EGGoI1aFkw7cmDA6j6gD"
+      crossorigin="anonymous"
+    />
+  </head>
+  <body style="padding-top: 2em; padding-bottom: 2em">
+    <div class="container" style="max-width: 700px; min-width: 400px">
+      <div class="row">
+        <form
+          action="/v1/publish/"
+          novalidate
+          class="needs-validation"
+          id="pubform"
+        >
+          <div class="mb-3">
+            <label for="input_env" class="form-label">Ambiente</label>
+            <select
+              id="input_env"
+              class="form-select"
+              aria-label="Ambiente"
+              aria-describedby="help_env"
+              required
+            >
+              <option selected></option>
+              <option value="production">Produção</option>
+              <option value="development">Desenvolvimento</option>
+            </select>
+            <div id="help_env" class="form-text">
+              Ambiente onde a documentação será publicada. Antes de publicar em
+              ambientes de produção, certifique-se de que a documentação está
+              pronta para consumo pelos clientes do CPQD.
+            </div>
+          </div>
+          <div class="mb-3">
+            <label for="input_product" class="form-label">Produto</label>
+            <input
+              type="input"
+              class="form-control"
+              id="input_product"
+              aria-label="Produto"
+              aria-describedby="help_product"
+              required
+              pattern="^[a-z][a-z0-9_]{0,31}$"
+            />
+            <div class="invalid-feedback">
+              Deve iniciar com letra e os demais caracteres podem ser letras,
+              números e sublinhas.
+            </div>
+            <div id="help_product" class="form-text">
+              Este é nome do produto que aparecerá na URL publicada. São aceitos
+              letras (não acentuadas e minúsculas), números e sublinhas. O
+              tamanho máximo do nome do produto é 32 caracteres. Qualquer nome
+              informado será aceito, permitindo criar novos produtos facilmente.
+            </div>
+          </div>
+          <div class="mb-3">
+            <label for="input_version" class="form-label">Versão</label>
+            <input
+              type="input"
+              class="form-control"
+              id="input_version"
+              adria-lavel="Versão"
+              aria-describedby="help_version"
+              placeholder="x.x.x"
+              required
+              pattern="^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$"
+            />
+            <div class="invalid-feedback">
+              A versão deve ser três valores numéricos separados por pontos.
+            </div>
+            <div id="help_version" class="form-text">
+              A versão deve estar no formato especificado por
+              <a href="https://semver.org/">semantic versioning</a>, ou seja,
+              deve ser composta por três valores numéricos separados por pontos.
+            </div>
+          </div>
+          <div class="mb-3">
+            <label for="input_lang" class="form-label">Idioma</label>
+            <select
+              id="input_lang"
+              class="form-select"
+              aria-label="Idioma"
+              aria-describedby="help_lang"
+              required
+            >
+              <option selected></option>
+              <option value="pt">Português</option>
+              <option value="en">Inglês</option>
+              <option value="es">Espanhol</option>
+            </select>
+            <div id="help_lang" class="form-text">Idioma da documentação.</div>
+          </div>
+          <div class="mb-3">
+            <label for="input_format" class="form-label">Formato</label>
+            <select
+              id="input_format"
+              class="form-select"
+              aria-label="Formato"
+              aria-describedby="help_format"
+              required
+            >
+              <option selected></option>
+              <option value="html">HTML</option>
+              <option value="tgz">TGZ</option>
+            </select>
+            <div id="help_format" class="form-text">
+              Formato da documentação que será publicada. Os formatos
+              <b>HTML</b> e <b>TGZ</b> requerem que o anexo seja um arquivo
+              <i>tar.gz</i> (pacote TAR comprimido com GZIP). Em <b>HTML</b>, o
+              conteúdo do arquivo será extraído e servido como conteúdo web
+              estático. Já em <b>TGZ</b>, o arquivo em si será servido,
+              permitindo que usuários baixem-no e tenham uma cópia de toda a
+              documentação localmente.
+            </div>
+          </div>
+          <div class="mb-3">
+            <label for="input_attachment" class="form-label">Anexo</label>
+            <input
+              type="file"
+              class="form-control"
+              id="input_attachment"
+              required
+            />
+            <div id="help_lang" class="form-text">
+              Arquivo ou pacote que será publicado. O tipo de arquivo depende do
+              formato indicado no campo anterior. O tamanho máximo do anexo é de
+              10 MiB. Caso o anexo seja um arquivo <i>tar.gz</i>, o tamanho
+              máximo de seu conteúdo expandido é de 15 MiB.
+            </div>
+          </div>
+          <div class="mb-3">
+            <label for="input_email" class="form-label">E-Mail</label>
+            <input
+              type="input"
+              class="form-control"
+              id="input_email"
+              required
+              pattern="^[a-zA-Z0-9]+@cpqd.com.br$"
+            />
+            <div class="invalid-feedback">Digite um e-mail válido.</div>
+            <div id="help_email" class="form-text">
+              Seu endereço de e-mail corporativo. Esta informação é utilizada
+              para registrar o autor da publicação e não aparecerá na
+              documentação publicada.
+            </div>
+          </div>
+
+          <div class="row">
+            <div class="col">
+              <button
+                type="button"
+                onclick="clear_form()"
+                class="btn btn-danger"
+              >
+                Limpar
+              </button>
+            </div>
+            <div class="col" style="text-align: right">
+              <button type="submit" class="btn btn-primary">Publicar</button>
+            </div>
+          </div>
+        </form>
+      </div>
+      <!--div class="row">
+          <div class="col">
+            <button type="button" onclick="clear_form()" class="btn btn-danger">Limpar</button>
+          </div>
+          <div class="col" style="text-align: right;">
+            <button type="button" onclick="submit_form()" class="btn btn-primary">Publicar</button>
+          </div>
+      </div-->
+    </div>
+
+    <script
+      src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"
+      integrity="sha384-w76AqPfDkMBDXo30jS1Sgez6pr3x5MlQ1ZAGC+nuZB+EYdgRZgiwxhTBTkF7CXvN"
+      crossorigin="anonymous"
+    ></script>
+
+    <script>
+      // Example starter JavaScript for disabling form submissions if there are invalid fields
+      (() => {
+        "use strict";
+
+        // Fetch all the forms we want to apply custom Bootstrap validation styles to
+        const forms = document.querySelectorAll(".needs-validation");
+
+        // Loop over them and prevent submission
+        Array.from(forms).forEach((form) => {
+          form.addEventListener(
+            "submit",
+            (event) => {
+              event.preventDefault();
+              event.stopPropagation();
+
+              if (form.checkValidity()) {
+                let params = {
+                  env: document.getElementById("input_env").value,
+                  prod: document.getElementById("input_product").value,
+                  ver: document.getElementById("input_version").value,
+                  fmt: document.getElementById("input_format").value,
+                  lang: document.getElementById("input_lang").value,
+                  email: document.getElementById("input_email").value,
+                };
+
+                let file = document.getElementById("input_attachment").files[0];
+
+                const formData = new FormData();
+                formData.append("params", JSON.stringify(params));
+                formData.append("attachment", file);
+
+                let url = `${location.protocol}//${location.hostname}${
+                  location.port ? ":" + location.port : ""
+                }/v1/publish`;
+                fetch(url, {
+                  method: "POST",
+                  body: formData,
+                })
+                  .then((r) => {
+                    if (!r.ok) throw r;
+                    return r.json();
+                  })
+                  .then((data) => {
+                    alert("Documentação publicada com sucesso!");
+                    clear_form(false);
+                  }).catch((err) => {
+                    err.json().then((body) => {
+                      alert(`Falha ao publicar: ${body.message}`);
+                    });
+                    return Promise.reject()
+                  });
+              }
+
+              form.classList.add("was-validated");
+            },
+            false
+          );
+        });
+      })();
+
+      function clear_form(ask = true) {
+        if (ask && !confirm("Apagar todos os dados preechidos no formulário?"))
+          return;
+        let form = document.getElementById("pubform");
+        form.reset();
+
+        for (let field of form.elements) {
+          switch (field.type.toLowerCase()) {
+            case "text":
+            case "password":
+            case "textarea":
+            case "hidden":
+              field.value = "";
+              break;
+            case "radio":
+            case "checkbox":
+              if (field.checked) {
+                field.checked = false;
+              }
+              break;
+            case "select-one":
+            case "select-multi":
+              field.selectedIndex = -1;
+              break;
+            default:
+              break;
+          }
+        }
+      }
+
+      function submit_form() {
+        document.getElementById("pubform").submit();
+      }
+    </script>
+  </body>
+</html>

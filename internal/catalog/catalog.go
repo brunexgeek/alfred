@@ -70,10 +70,9 @@ type Version struct {
 	Fix   int
 }
 
-var name_re, _ = regexp.Compile("^[a-z][a-z_-]+$")
-var full_re, _ = regexp.Compile("^[0-9]+\\.[0-9]+\\.[0-9]+$")
-var short_re, _ = regexp.Compile("^[0-9]+\\.[0-9]+$")
-var cut_re, _ = regexp.Compile("^[0-9]+\\.[0-9]+")
+var name_re, _ = regexp.Compile("^[a-z][a-z0-9_]{0,31}$")
+var full_re, _ = regexp.Compile("^[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}$")
+var short_re, _ = regexp.Compile("^[0-9]{1,3}\\.[0-9]{1,3}$")
 
 func ParseVersion(value string) (Version, error) {
 	if !IsValid(value) {

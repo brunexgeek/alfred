@@ -1,27 +1,32 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
+	"mime"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"os/signal"
 	"path"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"cpqd.com.br/alfred/internal/catalog"
+	"cpqd.com.br/alfred/internal/extra"
 	"cpqd.com.br/alfred/internal/publisher"
 )
 
 const max_upload_size = 10 * 1024 * 1024
 
 const server_version = "Alfred 1.0"
-const PUBLISH_ENDPOINT = "/v1/publish/"
-const ENUMERATE_ENDPOINT = "/v1/enumerate/"
+const PUBLISH_ENDPOINT = "/v1/publish"
+const ENUMERATE_ENDPOINT = "/v1/enumerate"
+const WEB_ENDPOINT = "/"
 
 var busy sync.Mutex
 
@@ -63,42 +68,97 @@ func extract_context(path string, endpoint string) string {
 	return path[len(endpoint):]
 }
 
+type Part struct {
+	Name        string
+	ContentType string
+	Data        []byte
+}
+
+func extract_parts(r *http.Request) (map[string]Part, error) {
+	if r.Method != "POST" {
+		return nil, fmt.Errorf("Unsupported method")
+	}
+
+	mtype, params, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || !strings.HasPrefix(mtype, "multipart/") {
+		return nil, fmt.Errorf("Expected multipart data")
+	}
+
+	parts := make(map[string]Part, 0)
+	reader := multipart.NewReader(r.Body, params["boundary"])
+	for {
+		p, err := reader.NextPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		data, err := extra.ReadAll(p, max_upload_size)
+		if err != nil {
+			return nil, err
+		}
+		parts[p.FormName()] = Part{
+			Name:        p.FormName(),
+			ContentType: p.Header.Get("Content-Type"),
+			Data:        data}
+	}
+	return parts, nil
+}
+
+type PublishRequest struct {
+	Environment string `json:"env"`
+	Product     string `json:"prod"`
+	Version     string `json:"ver"`
+	Format      string `json:"fmt"`
+	Language    string `json:"lang"`
+}
+
 func publish_handler(w http.ResponseWriter, r *http.Request) {
-	cname := extract_context(r.URL.Path, PUBLISH_ENDPOINT)
-	context, ok := environments[cname]
-	if len(cname) == 0 || !ok {
+	parts, err := extract_parts(r)
+	if err != nil {
+		send_error(400, err.Error(), w)
+		return
+	}
+
+	var request PublishRequest
+	if entry, ok := parts["params"]; ok {
+		err := json.Unmarshal(entry.Data, &request)
+		if err != nil {
+			send_error(400, "Invalid JSON object at multipart entry named 'params'", w)
+			return
+		}
+	} else {
+		send_error(400, "Missing multipart entry named 'params'", w)
+		return
+	}
+
+	var attachment io.Reader
+	if entry, ok := parts["attachment"]; ok {
+		attachment = bytes.NewReader(entry.Data)
+	} else {
+		send_error(400, "Missing multipart entry named 'params'", w)
+		return
+	}
+
+	context, ok := environments[request.Environment]
+	if len(request.Environment) == 0 || !ok {
 		send_error(400, "Unkown environment", w)
 		return
 	}
 
-	if r.Method != "POST" {
-		send_error(400, "Unsupported method", w)
-		return
-	}
-
-	if r.Header.Get("Content-Type") != "application/octet-stream" {
-		send_error(400, "Unsupported content type", w)
-		return
-	}
-
-	size, err := strconv.Atoi(r.Header.Get("Content-Length"))
-	if err != nil || size < 0 || size > max_upload_size {
-		send_error(400, "Payload size out of range", w)
-		return
-	}
-
-	version, err := catalog.ParseVersion(r.URL.Query().Get("version"))
+	version, err := catalog.ParseVersion(request.Version)
 	if err != nil {
 		send_error(400, "Invalid semantic version", w)
 		return
 	}
 
 	pub := catalog.Publication{
-		Product:      r.URL.Query().Get("product"),
+		Product:      strings.ToLower(request.Product),
 		Version:      version,
 		ShortVersion: version.GetShortVersion(),
-		Format:       catalog.FormatType(r.URL.Query().Get("type")),
-		Language:     catalog.Language(r.URL.Query().Get("lang")),
+		Format:       catalog.FormatType(request.Format),
+		Language:     catalog.Language(request.Language),
 		Date:         time.Now(),
 	}
 
@@ -112,7 +172,7 @@ func publish_handler(w http.ResponseWriter, r *http.Request) {
 	defer busy.Unlock()
 
 	// publish the resource
-	summary, err := publisher.Publish(defaultProd, &pub, r.Body)
+	summary, err := publisher.Publish(defaultProd, &pub, attachment)
 	if err != nil {
 		send_error(400, err.Error(), w)
 		return
@@ -195,10 +255,14 @@ func main() {
 		fmt.Printf("Initialized environment '%s' at '%s'\n", entry.Name, entry.Path)
 	}
 
+	address := fmt.Sprintf("%s:%d", config.Manager.Host, config.Manager.Port)
+	fmt.Printf("Serving web interface and APIs at http://%s\n", address)
+
 	mux := http.NewServeMux()
 	mux.HandleFunc(PUBLISH_ENDPOINT, publish_handler)
 	mux.HandleFunc(ENUMERATE_ENDPOINT, enumerate_handler)
-	server = &http.Server{Addr: fmt.Sprintf("%s:%d", config.Manager.Host, config.Manager.Port), Handler: mux}
+	mux.Handle(WEB_ENDPOINT, http.FileServer(http.Dir("cmd/alfred/web")))
+	server = &http.Server{Addr: address, Handler: mux}
 	server.ListenAndServe()
 	select {
 	case <-server_done:
