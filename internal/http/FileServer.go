@@ -35,7 +35,11 @@ const sniffLen = 512
 //
 //	http.Handle("/", http.FileServer(http.FS(fsys)))
 func FileServer(root http.FileSystem) http.Handler {
-	return &fileHandler{root}
+	return &fileHandler{root, make([]string, 0)}
+}
+
+func FileServerWithProxies(root http.FileSystem, proxies []string) http.Handler {
+	return &fileHandler{root, proxies}
 }
 
 func (f *fileHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -48,7 +52,8 @@ func (f *fileHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 type fileHandler struct {
-	root http.FileSystem
+	root    http.FileSystem
+	proxies []string
 }
 
 // name is '/'-separated, not filepath.Separator.
@@ -71,6 +76,13 @@ func serveFile(w http.ResponseWriter, r *http.Request, fs http.FileSystem, name 
 	}
 
 	if d.IsDir() {
+		url := r.URL.Path
+		// redirect if the directory name doesn't end in a slash
+		if url == "" || url[len(url)-1] != '/' {
+			localRedirect(w, r, url+"/")
+			return
+		}
+
 		// use contents of index.html for directory, if present
 		index := strings.TrimSuffix(name, "/") + indexPage
 		ff, err := fs.Open(index)
@@ -604,4 +616,45 @@ func sumRangesSize(ranges []httpRange) (size int64) {
 		size += ra.length
 	}
 	return
+}
+
+// localRedirect gives a Moved Permanently response.
+// It does not convert relative paths to absolute paths like Redirect does.
+func localRedirect(w http.ResponseWriter, r *http.Request, newPath string) {
+	if q := r.URL.RawQuery; q != "" {
+		newPath += "?" + q
+	}
+	w.Header().Set("Location", newPath)
+	w.WriteHeader(http.StatusMovedPermanently)
+}
+
+func (h fileHandler) GetRealAddress(r *http.Request) string {
+	return GetRealAddress(r, h.proxies)
+}
+
+func GetRealAddress(r *http.Request, proxies []string) string {
+	address := strings.Split(r.RemoteAddr, ":")[0]
+
+	if xff := r.Header.Get("X-Forwarded-For"); proxies != nil && len(xff) != 0 {
+		entries := strings.Split(xff, ",")
+		for i := range entries {
+			entries[i] = strings.TrimSpace(entries[i])
+		}
+		for i := len(entries) - 1; i >= 0; i++ {
+			if !IsKnownProxy(entries[i], proxies) {
+				return entries[i]
+			}
+		}
+	}
+
+	return address
+}
+
+func IsKnownProxy(host string, proxies []string) bool {
+	for j := range proxies {
+		if host == proxies[j] {
+			return true
+		}
+	}
+	return false
 }

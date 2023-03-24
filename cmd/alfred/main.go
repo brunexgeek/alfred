@@ -340,9 +340,10 @@ type GlobalValues struct {
 	block_regex  *regexp.Regexp
 	complete_url *regexp.Regexp
 	product_url  *regexp.Regexp
+	proxies      []string
 }
 
-var globals = GlobalValues{}
+var globals = GlobalValues{proxies: make([]string, 0)}
 
 func initialize_globals() error {
 	var err error
@@ -379,30 +380,17 @@ func NewFilteredServer(root string, pub *publisher.Publisher) FilteredServer {
 }
 
 func (h FilteredServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	const denied = "[D] Requested '%s'\n"
+	const mask = "[%s] %d '%s'\n"
 
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		fmt.Printf(denied, r.URL.Path)
+		fmt.Printf(mask, ahttp.GetRealAddress(r, globals.proxies), 405, r.URL.Path)
 		http_error(405, "Method Not Allowed", w)
 		return
 	}
 
-	// block requests trying to escape root
-	fpath := path.Join(h.Root, "/", r.URL.Path)
-	//fmt.Println(h.Root, "/", r.URL.Path, fpath)
-	if !strings.HasPrefix(fpath, h.Root) {
-		fmt.Printf(denied, r.URL.Path)
-		http_error(404, "Not Found", w)
-		return
-	}
-	r.URL.Path = strings.TrimPrefix(fpath, h.Root)
-	if len(r.URL.Path) == 0 {
-		r.URL.Path = "/"
-	}
-
 	// block requests using regex filter
 	if globals.block_regex.Match([]byte(r.URL.Path)) {
-		fmt.Printf(denied, r.URL.Path)
+		fmt.Printf(mask, ahttp.GetRealAddress(r, globals.proxies), 403, r.URL.Path)
 		http_error(403, "Forbidden", w)
 		return
 	}
@@ -410,7 +398,7 @@ func (h FilteredServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// check for dynamic generated content
 	matches := globals.complete_url.FindStringSubmatch(r.URL.Path)
 	if matches == nil || len(matches) != 5 {
-		fmt.Printf(denied, r.URL.Path)
+		fmt.Printf(mask, ahttp.GetRealAddress(r, globals.proxies), 404, r.URL.Path)
 		http_error(404, "Invalid", w)
 		return
 	}
@@ -428,25 +416,13 @@ func (h FilteredServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(302)
 			return
 		} else {
-			fmt.Printf(denied, r.URL.Path)
+			fmt.Printf(mask, ahttp.GetRealAddress(r, globals.proxies), 404, r.URL.Path)
 			http_error(404, "Product Not Found", w)
 			return
 		}
 	}
 
-	/*info, err := os.Stat(fpath)
-	if err != nil {
-		fmt.Printf(denied, r.URL.Path)
-		http_error(404, "Not Found", w)
-		return
-	}
-	if info.IsDir() { // TODO: check for 'index.html'
-		fmt.Printf(denied, r.URL.Path)
-		http_error(403, "Forbidden", w)
-		return
-	}*/
-
-	fmt.Printf("[A] Requested '%s' -> '%s'\n", r.URL.Path, fpath)
+	fmt.Printf(mask, ahttp.GetRealAddress(r, globals.proxies), 200, r.URL.Path)
 	h.server.ServeHTTP(w, r)
 }
 
