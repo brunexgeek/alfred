@@ -136,6 +136,7 @@ func deflate_to_file(fpath string, istream io.Reader) error {
 	return nil
 }
 
+// Validate a TAR package content
 func validate(stream *bytes.Reader, format catalog.FormatType) error {
 	stream.Seek(0, io.SeekStart)
 	tarReader := tar.NewReader(stream)

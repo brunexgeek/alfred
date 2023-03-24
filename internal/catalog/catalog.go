@@ -39,9 +39,10 @@ type Publication struct {
 func (c *Catalog) add_product(pub *Publication) {
 	result := c.Products[pub.Product]
 	if result == nil {
-		result = &Product{Name: pub.Product}
+		result = &Product{Name: pub.Product, Publications: make([]*Publication, 0)}
 		c.Products[pub.Product] = result
 	}
+	result.Publications = append(result.Publications, pub)
 	if pub.Version.Newer(result.Latest) {
 		result.Latest = pub.Version
 	}
@@ -70,9 +71,15 @@ type Version struct {
 	Fix   int
 }
 
-var name_re, _ = regexp.Compile("^[a-z][a-z0-9_]{0,31}$")
+const RE_PRODUCT_NAME = "([a-z][a-z0-9_]{0,31})"
+const RE_SHORT_VERSION = "([0-9]{1,3}\\.[0-9]{1,3})"
+const RE_URL_VERSION = "([0-9]{1,3}\\.[0-9]{1,3}|latest)"
+const RE_FORMAT = "(" + HTML + "|" + PDF + "|" + TGZ + ")"
+const RE_LANGUAGE = "(" + PT + "|" + ES + "|" + EN + ")"
+
+var name_re, _ = regexp.Compile("^" + RE_PRODUCT_NAME + "$")
 var full_re, _ = regexp.Compile("^[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}$")
-var short_re, _ = regexp.Compile("^[0-9]{1,3}\\.[0-9]{1,3}$")
+var short_re, _ = regexp.Compile("^" + RE_SHORT_VERSION + "$")
 
 func ParseVersion(value string) (Version, error) {
 	if !IsValid(value) {
@@ -155,7 +162,7 @@ type Language string
 const (
 	PT Language = "pt"
 	ES Language = "es"
-	EN Language = "enz"
+	EN Language = "en"
 )
 
 func Open(fpath string) (*Catalog, error) {
@@ -182,6 +189,10 @@ func Open(fpath string) (*Catalog, error) {
 	err = json.Unmarshal(data, &output)
 	if err != nil {
 		return nil, err
+	}
+
+	for _, pub := range output.Publications {
+		output.add_product(pub)
 	}
 
 	return output, nil

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,14 +21,20 @@ import (
 
 	"cpqd.com.br/alfred/internal/catalog"
 	"cpqd.com.br/alfred/internal/extra"
+	ahttp "cpqd.com.br/alfred/internal/http"
 	"cpqd.com.br/alfred/internal/publisher"
 )
+
+//go:embed web/index.html
+//go:embed web/bootstrap.min.css
+var resources embed.FS
 
 const max_upload_size = 10 * 1024 * 1024
 
 const server_version = "Alfred 1.0"
 const PUBLISH_ENDPOINT = "/v1/publish"
 const ENUMERATE_ENDPOINT = "/v1/enumerate"
+const ENVIRONMENTS_ENDPOINT = "/v1/environments"
 const WEB_ENDPOINT = "/"
 
 var busy sync.Mutex
@@ -143,11 +150,12 @@ func publish_handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	context, ok := environments[request.Environment]
+	env, ok := environments[request.Environment]
 	if len(request.Environment) == 0 || !ok {
 		send_error(400, "Unkown environment", w)
 		return
 	}
+	context := env.Publisher
 
 	version, err := catalog.ParseVersion(request.Version)
 	if err != nil {
@@ -188,11 +196,12 @@ func publish_handler(w http.ResponseWriter, r *http.Request) {
 
 func enumerate_handler(w http.ResponseWriter, r *http.Request) {
 	cname := strings.TrimPrefix(r.URL.Path, ENUMERATE_ENDPOINT)
-	context, ok := environments[cname]
+	env, ok := environments[cname]
 	if !ok {
 		send_error(400, "Unkown environment", w)
 		return
 	}
+	context := env.Publisher
 
 	type Result struct {
 		Name   string `json:"name"`
@@ -207,8 +216,17 @@ func enumerate_handler(w http.ResponseWriter, r *http.Request) {
 	send_object(200, entries, w)
 }
 
-func enumerate_product_handler(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintf(w, "Hi there, I love %s!", r.URL.Path[1:])
+func environment_handler(w http.ResponseWriter, r *http.Request) {
+	type Result struct {
+		Envs []string `json:"envs"`
+	}
+	result := Result{}
+
+	for key := range environments {
+		result.Envs = append(result.Envs, key)
+	}
+
+	send_object(200, result, w)
 }
 
 var defaultProd = "/tmp/alfred/prod" // default path for production
@@ -246,10 +264,16 @@ func load_configuration() (*Config, error) {
 	return OpenConfiguration(cpath)
 }
 
-var environments = make(map[string]*publisher.Publisher)
+type EnvironmentInfo struct {
+	Publisher   *publisher.Publisher
+	Environment Environment
+}
+
+var environments = make(map[string]*EnvironmentInfo)
 
 func main() {
 	install_signal_hook()
+	initialize_globals()
 
 	fmt.Printf("Alfred %s\n", ALFRED_VERSION)
 
@@ -260,16 +284,17 @@ func main() {
 	}
 
 	for _, entry := range config.Environments {
+		fmt.Println(path.Join(entry.Path, "catalog.json"))
 		context, err := publisher.NewPublisher(path.Join(entry.Path, "catalog.json"))
 		if err != nil {
 			fmt.Println(err)
 			os.Exit(1)
 		}
-		environments[entry.Name] = context
+		fmt.Printf("Catalog with %d entries\n", len(context.Catalog.Products))
+		env := &EnvironmentInfo{Publisher: context, Environment: entry}
+		environments[entry.Name] = env
 		fmt.Printf("Initialized environment '%s' at '%s'\n", entry.Name, entry.Path)
-	}
 
-	for _, env := range config.Environments {
 		create_file_server(env)
 	}
 
@@ -288,7 +313,8 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc(PUBLISH_ENDPOINT, publish_handler)
 	//mux.HandleFunc(ENUMERATE_ENDPOINT, enumerate_handler)
-	//mux.Handle(WEB_ENDPOINT, http.FileServer(http.Dir("cmd/alfred/web")))
+	mux.HandleFunc(ENVIRONMENTS_ENDPOINT, environment_handler)
+	mux.Handle(WEB_ENDPOINT, ahttp.FileServer(http.FS(resources)))
 	server := &http.Server{Addr: address, Handler: mux}
 	go server.ListenAndServe()
 	fmt.Printf("[API] Listening at http://%s\n", address)
@@ -298,8 +324,8 @@ func main() {
 	case <-server_done:
 	}
 
-	for _, context := range environments {
-		context.Save()
+	for _, env := range environments {
+		env.Publisher.Save()
 	}
 }
 
@@ -310,19 +336,45 @@ func http_error(code int, msg string, w http.ResponseWriter) {
 	fmt.Fprintln(w, msg)
 }
 
-var file_re, _ = regexp.Compile("/\\..|catalog.json$")
-
-type FilteredServer struct {
-	Root   string
-	server http.Handler
+type GlobalValues struct {
+	block_regex  *regexp.Regexp
+	complete_url *regexp.Regexp
+	product_url  *regexp.Regexp
 }
 
-func NewFilteredServer(root string) FilteredServer {
+var globals = GlobalValues{}
+
+func initialize_globals() error {
+	var err error
+	globals.block_regex, err = regexp.Compile("/\\..|catalog.json$")
+	if err != nil {
+		return err
+	}
+	globals.product_url, err = regexp.Compile(fmt.Sprintf("^/%s", catalog.RE_PRODUCT_NAME))
+	if err != nil {
+		return err
+	}
+	globals.complete_url, err = regexp.Compile(fmt.Sprintf("^/%s/%s/%s/%s", catalog.RE_PRODUCT_NAME, catalog.RE_FORMAT, catalog.RE_URL_VERSION, catalog.RE_LANGUAGE))
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+type FilteredServer struct {
+	Root      string
+	server    http.Handler
+	Publisher *publisher.Publisher
+}
+
+func NewFilteredServer(root string, pub *publisher.Publisher) FilteredServer {
 	if strings.HasSuffix(root, "/") {
 		root = root[:1]
 	}
 	return FilteredServer{
-		Root: root, server: http.FileServer(http.Dir(root)),
+		Root:      root,
+		server:    ahttp.FileServer(http.Dir(root)),
+		Publisher: pub,
 	}
 }
 
@@ -349,13 +401,40 @@ func (h FilteredServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// block requests using regex filter
-	if file_re.Match([]byte(r.URL.Path)) {
+	if globals.block_regex.Match([]byte(r.URL.Path)) {
 		fmt.Printf(denied, r.URL.Path)
 		http_error(403, "Forbidden", w)
 		return
 	}
 
-	info, err := os.Stat(fpath)
+	// check for dynamic generated content
+	matches := globals.complete_url.FindStringSubmatch(r.URL.Path)
+	if matches == nil || len(matches) != 5 {
+		fmt.Printf(denied, r.URL.Path)
+		http_error(404, "Invalid", w)
+		return
+	}
+
+	if matches[3] == "latest" {
+		if product, ok := h.Publisher.Catalog.Products[matches[1]]; ok {
+			new_url := fmt.Sprintf("/%s/%s/%s/%s%s",
+				matches[1],
+				matches[2],
+				product.Latest.GetShortVersion().ToString(),
+				matches[4],
+				strings.TrimPrefix(r.URL.Path, matches[0]))
+			w.Header().Add("Content-Length", "0")
+			w.Header().Add("Location", new_url)
+			w.WriteHeader(302)
+			return
+		} else {
+			fmt.Printf(denied, r.URL.Path)
+			http_error(404, "Product Not Found", w)
+			return
+		}
+	}
+
+	/*info, err := os.Stat(fpath)
 	if err != nil {
 		fmt.Printf(denied, r.URL.Path)
 		http_error(404, "Not Found", w)
@@ -365,17 +444,17 @@ func (h FilteredServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		fmt.Printf(denied, r.URL.Path)
 		http_error(403, "Forbidden", w)
 		return
-	}
+	}*/
 
-	fmt.Printf("[A] Requested '%s'\n", r.URL.Path)
+	fmt.Printf("[A] Requested '%s' -> '%s'\n", r.URL.Path, fpath)
 	h.server.ServeHTTP(w, r)
 }
 
-func create_file_server(env Environment) {
-	address := fmt.Sprintf("%s:%d", env.Host, env.Port)
+func create_file_server(env *EnvironmentInfo) {
+	address := fmt.Sprintf("%s:%d", env.Environment.Host, env.Environment.Port)
 	//mux := http.NewServeMux()
 	//mux.Handle("/", NewFilteredServer(env.Path))
 	//server := &http.Server{Addr: address, Handler: mux}
-	server := &http.Server{Addr: address, Handler: NewFilteredServer(env.Path)}
+	server := &http.Server{Addr: address, Handler: NewFilteredServer(env.Environment.Path, env.Publisher)}
 	servers = append(servers, server)
 }
