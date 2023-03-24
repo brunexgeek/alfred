@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -12,6 +13,7 @@ import (
 	"os/signal"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -212,15 +214,24 @@ func enumerate_product_handler(w http.ResponseWriter, r *http.Request) {
 var defaultProd = "/tmp/alfred/prod" // default path for production
 var defaultTest = "/tmp/alfred/test" // default path for testing
 var server_done = make(chan int)
-var server *http.Server
+var servers []*http.Server = make([]*http.Server, 0)
+var killme = false
 
 func install_signal_hook() {
 	c := make(chan os.Signal)
 	signal.Notify(c, os.Interrupt)
 	go func() {
 		<-c
-		server.Shutdown(nil)
-		server_done <- 1
+		if killme {
+			os.Exit(1)
+		}
+		killme = true
+		go func() {
+			for _, server := range servers {
+				server.Shutdown(nil)
+			}
+			server_done <- 1
+		}()
 	}()
 }
 
@@ -231,6 +242,7 @@ func load_configuration() (*Config, error) {
 	}
 	cpath := path.Join(tmp, "config.json")
 	fmt.Printf("Loading configuration from '%s'\n", cpath)
+
 	return OpenConfiguration(cpath)
 }
 
@@ -238,6 +250,8 @@ var environments = make(map[string]*publisher.Publisher)
 
 func main() {
 	install_signal_hook()
+
+	fmt.Printf("Alfred %s\n", ALFRED_VERSION)
 
 	config, err := load_configuration()
 	if err != nil {
@@ -255,15 +269,31 @@ func main() {
 		fmt.Printf("Initialized environment '%s' at '%s'\n", entry.Name, entry.Path)
 	}
 
-	address := fmt.Sprintf("%s:%d", config.Manager.Host, config.Manager.Port)
-	fmt.Printf("Serving web interface and APIs at http://%s\n", address)
+	for _, env := range config.Environments {
+		create_file_server(env)
+	}
 
+	for i, server := range servers {
+		go func(env Environment, server *http.Server) {
+			fmt.Printf("[%s] Listening at %s:%d\n", env.Name, env.Host, env.Port)
+			err := server.ListenAndServe()
+			if err != nil && !errors.Is(err, http.ErrServerClosed) {
+				fmt.Printf("[%s] Error listening at %s:%d\n", env.Name, env.Host, env.Port)
+			}
+		}(config.Environments[i], server)
+	}
+
+	// start API
+	address := fmt.Sprintf("%s:%d", config.Manager.Host, config.Manager.Port)
 	mux := http.NewServeMux()
 	mux.HandleFunc(PUBLISH_ENDPOINT, publish_handler)
-	mux.HandleFunc(ENUMERATE_ENDPOINT, enumerate_handler)
-	mux.Handle(WEB_ENDPOINT, http.FileServer(http.Dir("cmd/alfred/web")))
-	server = &http.Server{Addr: address, Handler: mux}
-	server.ListenAndServe()
+	//mux.HandleFunc(ENUMERATE_ENDPOINT, enumerate_handler)
+	//mux.Handle(WEB_ENDPOINT, http.FileServer(http.Dir("cmd/alfred/web")))
+	server := &http.Server{Addr: address, Handler: mux}
+	go server.ListenAndServe()
+	fmt.Printf("[API] Listening at http://%s\n", address)
+	servers = append(servers, server)
+
 	select {
 	case <-server_done:
 	}
@@ -271,4 +301,81 @@ func main() {
 	for _, context := range environments {
 		context.Save()
 	}
+}
+
+func http_error(code int, msg string, w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(code)
+	fmt.Fprintln(w, msg)
+}
+
+var file_re, _ = regexp.Compile("/\\..|catalog.json$")
+
+type FilteredServer struct {
+	Root   string
+	server http.Handler
+}
+
+func NewFilteredServer(root string) FilteredServer {
+	if strings.HasSuffix(root, "/") {
+		root = root[:1]
+	}
+	return FilteredServer{
+		Root: root, server: http.FileServer(http.Dir(root)),
+	}
+}
+
+func (h FilteredServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	const denied = "[D] Requested '%s'\n"
+
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		fmt.Printf(denied, r.URL.Path)
+		http_error(405, "Method Not Allowed", w)
+		return
+	}
+
+	// block requests trying to escape root
+	fpath := path.Join(h.Root, "/", r.URL.Path)
+	//fmt.Println(h.Root, "/", r.URL.Path, fpath)
+	if !strings.HasPrefix(fpath, h.Root) {
+		fmt.Printf(denied, r.URL.Path)
+		http_error(404, "Not Found", w)
+		return
+	}
+	r.URL.Path = strings.TrimPrefix(fpath, h.Root)
+	if len(r.URL.Path) == 0 {
+		r.URL.Path = "/"
+	}
+
+	// block requests using regex filter
+	if file_re.Match([]byte(r.URL.Path)) {
+		fmt.Printf(denied, r.URL.Path)
+		http_error(403, "Forbidden", w)
+		return
+	}
+
+	info, err := os.Stat(fpath)
+	if err != nil {
+		fmt.Printf(denied, r.URL.Path)
+		http_error(404, "Not Found", w)
+		return
+	}
+	if info.IsDir() { // TODO: check for 'index.html'
+		fmt.Printf(denied, r.URL.Path)
+		http_error(403, "Forbidden", w)
+		return
+	}
+
+	fmt.Printf("[A] Requested '%s'\n", r.URL.Path)
+	h.server.ServeHTTP(w, r)
+}
+
+func create_file_server(env Environment) {
+	address := fmt.Sprintf("%s:%d", env.Host, env.Port)
+	//mux := http.NewServeMux()
+	//mux.Handle("/", NewFilteredServer(env.Path))
+	//server := &http.Server{Addr: address, Handler: mux}
+	server := &http.Server{Addr: address, Handler: NewFilteredServer(env.Path)}
+	servers = append(servers, server)
 }
