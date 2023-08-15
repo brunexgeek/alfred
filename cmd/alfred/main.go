@@ -182,7 +182,7 @@ func publish_handler(w http.ResponseWriter, r *http.Request) {
 	defer busy.Unlock()
 
 	// publish the resource
-	summary, err := publisher.Publish(defaultProd, &pub, attachment)
+	summary, err := publisher.Publish(env.Environment.Path, &pub, attachment)
 	if err != nil {
 		send_error(400, err.Error(), w)
 		return
@@ -229,8 +229,6 @@ func environment_handler(w http.ResponseWriter, r *http.Request) {
 	send_object(200, result, w)
 }
 
-var defaultProd = "/tmp/alfred/prod" // default path for production
-var defaultTest = "/tmp/alfred/test" // default path for testing
 var server_done = make(chan int)
 var servers []*http.Server = make([]*http.Server, 0)
 var killme = false

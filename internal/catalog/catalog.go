@@ -204,7 +204,7 @@ func (c *Catalog) Save(fpath string) error {
 		return err
 	}
 
-	file, err := os.OpenFile(fpath, os.O_RDWR|os.O_CREATE, 0755)
+	file, err := os.OpenFile(fpath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0755)
 	if err != nil {
 		return err
 	}
