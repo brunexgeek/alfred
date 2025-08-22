@@ -19,6 +19,8 @@ import (
 	"sync"
 	"time"
 
+	"log"
+
 	"cpqd.com.br/alfred/internal/catalog"
 	"cpqd.com.br/alfred/internal/extra"
 	ahttp "cpqd.com.br/alfred/internal/http"
@@ -335,10 +337,12 @@ func http_error(code int, msg string, w http.ResponseWriter) {
 }
 
 type GlobalValues struct {
-	block_regex  *regexp.Regexp
-	complete_url *regexp.Regexp
-	product_url  *regexp.Regexp
-	proxies      []string
+	block_regex *regexp.Regexp
+	product_url *regexp.Regexp
+	format_url  *regexp.Regexp
+	version_url *regexp.Regexp
+	full_url    *regexp.Regexp
+	proxies     []string
 }
 
 var globals = GlobalValues{proxies: make([]string, 0)}
@@ -349,11 +353,19 @@ func initialize_globals() error {
 	if err != nil {
 		return err
 	}
-	globals.product_url, err = regexp.Compile(fmt.Sprintf("^/%s", catalog.RE_PRODUCT_NAME))
+	globals.product_url, err = regexp.Compile(fmt.Sprintf("^/%s/?$", catalog.RE_PRODUCT_NAME))
 	if err != nil {
 		return err
 	}
-	globals.complete_url, err = regexp.Compile(fmt.Sprintf("^/%s/%s/%s/%s", catalog.RE_PRODUCT_NAME, catalog.RE_FORMAT, catalog.RE_URL_VERSION, catalog.RE_LANGUAGE))
+	globals.format_url, err = regexp.Compile(fmt.Sprintf("^/%s/%s/?$", catalog.RE_PRODUCT_NAME, catalog.RE_FORMAT))
+	if err != nil {
+		return err
+	}
+	globals.version_url, err = regexp.Compile(fmt.Sprintf("^/%s/%s/%s/?$", catalog.RE_PRODUCT_NAME, catalog.RE_FORMAT, catalog.RE_URL_VERSION))
+	if err != nil {
+		return err
+	}
+	globals.full_url, err = regexp.Compile(fmt.Sprintf("^/%s/%s/%s/%s/(.*)$", catalog.RE_PRODUCT_NAME, catalog.RE_FORMAT, catalog.RE_URL_VERSION, catalog.RE_LANGUAGE))
 	if err != nil {
 		return err
 	}
@@ -377,6 +389,58 @@ func NewFilteredServer(root string, pub *publisher.Publisher) FilteredServer {
 	}
 }
 
+func (h FilteredServer) log_error(r *http.Request, status int, msg string) {
+	const mask = "[%s] %d '%s' %s\n"
+	log.Printf(mask, ahttp.GetRealAddress(r, globals.proxies), status, r.URL.Path, msg)
+}
+
+func (h FilteredServer) redirect_to(w http.ResponseWriter, url string) {
+	w.Header().Add("Content-Length", "0")
+	w.Header().Add("Location", url)
+	w.WriteHeader(302)
+}
+
+func (h FilteredServer) handle_product(w http.ResponseWriter, r *http.Request) {
+	matches := globals.product_url.FindStringSubmatch(r.URL.Path)
+	if matches == nil {
+		h.log_error(r, 404, "Product not found")
+		http_error(404, "Not found", w)
+		return
+	}
+
+	if product, ok := h.Publisher.Catalog.Products[matches[1]]; ok && len(product.Publications) > 0 {
+		var choice *catalog.Publication
+		for _, pub := range product.Publications {
+			if pub.Version == product.Latest {
+				if pub.Language == catalog.PT {
+					choice = pub
+				} else if choice == nil {
+					choice = pub
+				}
+			}
+		}
+
+		if choice == nil {
+			h.log_error(r, 404, "Latest version do not exists")
+			http_error(404, "Not found", w)
+			return
+		}
+
+		// look for the latest HTML publication
+
+		new_url := fmt.Sprintf("/%s/%s/%s/%s/%s",
+			matches[1],
+			catalog.HTML,
+			choice.ShortVersion.ToString(),
+			choice.Language,
+			matches[5])
+		h.redirect_to(w, new_url)
+	} else {
+		h.log_error(r, 404, "Product not found")
+		http_error(404, "Not found", w)
+	}
+}
+
 func (h FilteredServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	const mask = "[%s] %d '%s'\n"
 
@@ -388,16 +452,17 @@ func (h FilteredServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// block requests using regex filter
 	if globals.block_regex.Match([]byte(r.URL.Path)) {
-		fmt.Printf(mask, ahttp.GetRealAddress(r, globals.proxies), 403, r.URL.Path)
+		h.log_error(r, 403, "Not allowed")
 		http_error(403, "Forbidden", w)
 		return
 	}
 
 	// check for dynamic generated content
-	matches := globals.complete_url.FindStringSubmatch(r.URL.Path)
-	if matches == nil || len(matches) != 5 {
-		fmt.Printf(mask, ahttp.GetRealAddress(r, globals.proxies), 404, r.URL.Path)
-		http_error(404, "Invalid", w)
+	matches := globals.full_url.FindStringSubmatch(r.URL.Path)
+	if matches == nil {
+		//fmt.Printf(mask, ahttp.GetRealAddress(r, globals.proxies), 404, r.URL.Path)
+		//http_error(404, "Invalid", w)
+		h.handle_product(w, r)
 		return
 	}
 

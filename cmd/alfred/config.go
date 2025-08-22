@@ -18,12 +18,17 @@ type Manager struct {
 	Port int    `json:"port"`
 }
 
+type Default struct {
+	language string
+}
+
 type Environment struct {
-	Name string `json:"name"`
-	Path string `json:"path"`
-	Host string `json:"host"`
-	Port int    `json:"port"`
-	Url  string `json:"url"`
+	Name     string `json:"name"`
+	Path     string `json:"path"`
+	Host     string `json:"host"`
+	Port     int    `json:"port"`
+	Url      string `json:"url"`
+	Defaults Default
 }
 
 func OpenConfiguration(fpath string) (*Config, error) {

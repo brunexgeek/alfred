@@ -241,6 +241,8 @@ func (p *Publication) Hash() uint64 {
 func (c *Catalog) AddPublication(pub *Publication) {
 	hash := pub.Hash()
 
+	// TODO: add non-HTML publication only if there's a HTML publication in the same version
+
 	for i, item := range c.Publications {
 		if item.Hash() == hash {
 			c.Publications[i] = pub
