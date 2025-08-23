@@ -166,12 +166,11 @@ func publish_handler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	pub := catalog.Publication{
-		Product:      strings.ToLower(request.Product),
-		Version:      version,
-		ShortVersion: version.GetShortVersion(),
-		Format:       catalog.FormatType(request.Format),
-		Language:     catalog.Language(request.Language),
-		Date:         time.Now(),
+		Product:  strings.ToLower(request.Product),
+		Version:  version,
+		Format:   catalog.FormatType(request.Format),
+		Language: catalog.Language(request.Language),
+		Date:     time.Now(),
 	}
 
 	if err := pub.Validate(); err != nil {
@@ -197,7 +196,8 @@ func publish_handler(w http.ResponseWriter, r *http.Request) {
 }
 
 func enumerate_handler(w http.ResponseWriter, r *http.Request) {
-	cname := strings.TrimPrefix(r.URL.Path, ENUMERATE_ENDPOINT)
+	params := r.URL.Query()
+	cname := params.Get("env")
 	env, ok := environments[cname]
 	if !ok {
 		send_error(400, "Unkown environment", w)
@@ -294,8 +294,6 @@ func main() {
 		env := &EnvironmentInfo{Publisher: context, Environment: entry}
 		environments[entry.Name] = env
 		fmt.Printf("Initialized environment '%s' at '%s'\n", entry.Name, entry.Path)
-
-		create_file_server(env)
 	}
 
 	for i, server := range servers {
@@ -312,7 +310,7 @@ func main() {
 	address := fmt.Sprintf("%s:%d", config.Manager.Host, config.Manager.Port)
 	mux := http.NewServeMux()
 	mux.HandleFunc(PUBLISH_ENDPOINT, publish_handler)
-	//mux.HandleFunc(ENUMERATE_ENDPOINT, enumerate_handler)
+	mux.HandleFunc(ENUMERATE_ENDPOINT, enumerate_handler)
 	mux.HandleFunc(ENVIRONMENTS_ENDPOINT, environment_handler)
 	mux.Handle(WEB_ENDPOINT, ahttp.FileServer(http.FS(resources)))
 	server := &http.Server{Addr: address, Handler: mux}
@@ -389,6 +387,11 @@ func NewFilteredServer(root string, pub *publisher.Publisher) FilteredServer {
 	}
 }
 
+func (h FilteredServer) log_info(r *http.Request, msg string) {
+	const mask = "[%s] %s\n"
+	log.Printf(mask, ahttp.GetRealAddress(r, globals.proxies), msg)
+}
+
 func (h FilteredServer) log_error(r *http.Request, status int, msg string) {
 	const mask = "[%s] %d '%s' %s\n"
 	log.Printf(mask, ahttp.GetRealAddress(r, globals.proxies), status, r.URL.Path, msg)
@@ -398,102 +401,4 @@ func (h FilteredServer) redirect_to(w http.ResponseWriter, url string) {
 	w.Header().Add("Content-Length", "0")
 	w.Header().Add("Location", url)
 	w.WriteHeader(302)
-}
-
-func (h FilteredServer) handle_product(w http.ResponseWriter, r *http.Request) {
-	matches := globals.product_url.FindStringSubmatch(r.URL.Path)
-	if matches == nil {
-		h.log_error(r, 404, "Product not found")
-		http_error(404, "Not found", w)
-		return
-	}
-
-	if product, ok := h.Publisher.Catalog.Products[matches[1]]; ok && len(product.Publications) > 0 {
-		var choice *catalog.Publication
-		for _, pub := range product.Publications {
-			if pub.Version == product.Latest {
-				if pub.Language == catalog.PT {
-					choice = pub
-				} else if choice == nil {
-					choice = pub
-				}
-			}
-		}
-
-		if choice == nil {
-			h.log_error(r, 404, "Latest version do not exists")
-			http_error(404, "Not found", w)
-			return
-		}
-
-		// look for the latest HTML publication
-
-		new_url := fmt.Sprintf("/%s/%s/%s/%s/%s",
-			matches[1],
-			catalog.HTML,
-			choice.ShortVersion.ToString(),
-			choice.Language,
-			matches[5])
-		h.redirect_to(w, new_url)
-	} else {
-		h.log_error(r, 404, "Product not found")
-		http_error(404, "Not found", w)
-	}
-}
-
-func (h FilteredServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	const mask = "[%s] %d '%s'\n"
-
-	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		fmt.Printf(mask, ahttp.GetRealAddress(r, globals.proxies), 405, r.URL.Path)
-		http_error(405, "Method Not Allowed", w)
-		return
-	}
-
-	// block requests using regex filter
-	if globals.block_regex.Match([]byte(r.URL.Path)) {
-		h.log_error(r, 403, "Not allowed")
-		http_error(403, "Forbidden", w)
-		return
-	}
-
-	// check for dynamic generated content
-	matches := globals.full_url.FindStringSubmatch(r.URL.Path)
-	if matches == nil {
-		//fmt.Printf(mask, ahttp.GetRealAddress(r, globals.proxies), 404, r.URL.Path)
-		//http_error(404, "Invalid", w)
-		h.handle_product(w, r)
-		return
-	}
-
-	if matches[3] == "latest" {
-		if product, ok := h.Publisher.Catalog.Products[matches[1]]; ok {
-			new_url := fmt.Sprintf("/%s/%s/%s/%s%s",
-				matches[1],
-				matches[2],
-				product.Latest.GetShortVersion().ToString(),
-				matches[4],
-				strings.TrimPrefix(r.URL.Path, matches[0]))
-			w.Header().Add("Content-Length", "0")
-			w.Header().Add("Location", new_url)
-			w.WriteHeader(302)
-			return
-		} else {
-			fmt.Printf(mask, ahttp.GetRealAddress(r, globals.proxies), 404, r.URL.Path)
-			http_error(404, "Product Not Found", w)
-			return
-		}
-	}
-
-	fmt.Printf(mask, ahttp.GetRealAddress(r, globals.proxies), 200, r.URL.Path)
-	h.server.ServeHTTP(w, r)
-}
-
-func create_file_server(env *EnvironmentInfo) {
-	address := fmt.Sprintf("%s:%d", env.Environment.Host, env.Environment.Port)
-	//mux := http.NewServeMux()
-	//mux.Handle("/", NewFilteredServer(env.Path))
-	//server := &http.Server{Addr: address, Handler: mux}
-	server := &http.Server{Addr: address, Handler: NewFilteredServer(env.Environment.Path, env.Publisher)}
-	servers = append(servers, server)
 }

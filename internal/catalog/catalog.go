@@ -14,6 +14,22 @@ import (
 	"time"
 )
 
+type Language string
+
+const (
+	PT Language = "pt"
+	ES Language = "es"
+	EN Language = "en"
+)
+
+type FormatType string
+
+const (
+	HTML FormatType = "html"
+	PDF  FormatType = "pdf"
+	TGZ  FormatType = "tgz"
+)
+
 type Catalog struct {
 	Products     map[string]*Product `json:"-"`
 	Publications []*Publication      `json:"pubs,omitempty"`
@@ -27,13 +43,12 @@ type Product struct {
 }
 
 type Publication struct {
-	Product      string     `json:"prod"` // unique product name (lowercase)
-	ShortVersion Version    `json:"sver"` // only major and minor
-	Version      Version    `json:"ver"`  // complete semantic version
-	Format       FormatType `json:"fmt"`
-	Language     Language   `json:"lang"`
-	Date         time.Time  `json:"date"`
-	hash         uint64     `json:"-"`
+	Product  string     `json:"prod"` // unique product name (lowercase)
+	Version  Version    `json:"ver"`  // complete semantic version
+	Format   FormatType `json:"fmt"`
+	Language Language   `json:"lang"`
+	Date     time.Time  `json:"date"`
+	hash     uint64     `json:"-"`
 }
 
 func (c *Catalog) add_product(pub *Publication) {
@@ -46,29 +61,28 @@ func (c *Catalog) add_product(pub *Publication) {
 	if pub.Version.Newer(result.Latest) {
 		result.Latest = pub.Version
 	}
-
 }
 
 func (p Publication) Validate() error {
 	if name_re == nil || !name_re.MatchString(p.Product) {
-		return fmt.Errorf("Invalid product name")
+		return fmt.Errorf("invalid product name")
 	}
 	if p.Language != "pt" && p.Language != "en" && p.Language != "es" {
-		return fmt.Errorf("Unsupported language")
+		return fmt.Errorf("unsupported language")
 	}
 	if !p.Format.IsValid() {
-		return fmt.Errorf("Unsupported format")
+		return fmt.Errorf("unsupported format")
 	}
 	if !p.Version.IsFull() {
-		return fmt.Errorf("Incomplete or invalid semantic version")
+		return fmt.Errorf("incomplete or invalid semantic version")
 	}
 	return nil
 }
 
 type Version struct {
-	Major int
-	Minor int
-	Fix   int
+	Major int `json:"major"`
+	Minor int `json:"minor"`
+	Fix   int `json:"fix"`
 }
 
 const RE_PRODUCT_NAME = "([a-z][a-z0-9_]{0,31})"
@@ -145,25 +159,9 @@ func (v Version) Newer(o Version) bool {
 	return v.Major > o.Major || v.Minor > o.Minor || v.Fix > o.Fix
 }
 
-type FormatType string
-
-const (
-	HTML FormatType = "html"
-	PDF  FormatType = "pdf"
-	TGZ  FormatType = "tgz"
-)
-
 func (v FormatType) IsValid() bool {
 	return v == HTML || v == PDF || v == TGZ
 }
-
-type Language string
-
-const (
-	PT Language = "pt"
-	ES Language = "es"
-	EN Language = "en"
-)
 
 func Open(fpath string) (*Catalog, error) {
 	output := &Catalog{seed: maphash.MakeSeed(), Products: make(map[string]*Product)}
@@ -217,12 +215,12 @@ func (c *Catalog) Save(fpath string) error {
 	return nil
 }
 
-func (p *Publication) MetaPath() string {
+func (p *Publication) metaPath() string {
 	return path.Join(p.Product, string(p.Format))
 }
 
 func (p *Publication) DataPath() string {
-	return path.Join(p.Product, string(p.Format), p.ShortVersion.ToString(), string(p.Language))
+	return path.Join(p.Product, string(p.Language), string(p.Version.Major), string(p.Version.Minor), string(p.Format))
 }
 
 func (p *Publication) Hash() uint64 {

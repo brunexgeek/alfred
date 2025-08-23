@@ -62,7 +62,7 @@ func Publish(root string, pub *catalog.Publication, input io.Reader) (*Summary, 
 			return nil, err
 		}
 	} else {
-		// other formats ('pdf' and 'tgz') need just to be copied
+		// just copy for other formats ('pdf' and 'tgz')
 
 		fname := path.Join(data_path, fmt.Sprintf("%s-%s-%s.",
 			pub.Product, pub.Version.ToString(), pub.Language))
@@ -157,18 +157,18 @@ func validate(stream *bytes.Reader, format catalog.FormatType) error {
 
 		// files must be prefixed with the specified format (e.g. "html/" for "html")
 		// files with any other prefix will fail
-		prefix := string(format) + "/"
-		if !strings.HasPrefix(header.Name, prefix) {
-			return fmt.Errorf("Missing format prefix in one or more files")
-		}
-		npath := header.Name[len(prefix):]
+		//prefix := string(format) + "/"
+		//if !strings.HasPrefix(header.Name, prefix) {
+		//	return fmt.Errorf("Missing format prefix in one or more files")
+		//}
+		//npath := header.Name[len(prefix):]
 		// check for hidden files/directories
-		if strings.HasPrefix(npath, ".") {
-			return fmt.Errorf("Payload must not contain hidden files")
+		if strings.HasPrefix(header.Name, ".") {
+			return fmt.Errorf("payload must not contain hidden files")
 		}
 		// check for object inventory
-		if strings.HasSuffix(npath, "objects.inv") {
-			return fmt.Errorf("Payload must not contain 'object.inv' file")
+		if strings.HasSuffix(header.Name, "objects.inv") {
+			return fmt.Errorf("payload must not contain 'object.inv' file")
 		}
 	}
 	stream.Seek(0, io.SeekStart)
@@ -197,11 +197,12 @@ func extract(dest string, stream *bytes.Reader, format catalog.FormatType) (*Sum
 
 		// files must be prefixed with the specified format (e.g. "html/" for "html")
 		// files with any other prefix will be ignored
-		prefix := string(format) + "/"
-		if !strings.HasPrefix(header.Name, prefix) {
-			continue
-		}
-		npath := header.Name[len(prefix):]
+		//prefix := string(format) + "/"
+		//if !strings.HasPrefix(header.Name, prefix) {
+		//	continue
+		//}
+		//npath := header.Name[len(prefix):]
+		npath := header.Name
 		// ignore hidden files/directories
 		if strings.HasPrefix(npath, ".") {
 			continue
