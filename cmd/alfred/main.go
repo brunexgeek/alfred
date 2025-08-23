@@ -157,7 +157,6 @@ func publish_handler(w http.ResponseWriter, r *http.Request) {
 		send_error(400, "Unkown environment", w)
 		return
 	}
-	context := env.Publisher
 
 	version, err := catalog.ParseVersion(request.Version)
 	if err != nil {
@@ -168,8 +167,8 @@ func publish_handler(w http.ResponseWriter, r *http.Request) {
 	pub := catalog.Publication{
 		Product:  strings.ToLower(request.Product),
 		Version:  version,
-		Format:   catalog.FormatType(request.Format),
-		Language: catalog.Language(request.Language),
+		Format:   catalog.FormatCode(request.Format),
+		Language: catalog.LanguageCode(request.Language),
 		Date:     time.Now(),
 	}
 
@@ -189,10 +188,20 @@ func publish_handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// update catalog
-	context.Catalog.AddPublication(&pub)
-	context.Save()
+	env.Catalog.AddPublication(&pub)
+
+	// update all index pages
+	update_indices(&pub)
 
 	send_object(http.StatusOK, summary, w)
+}
+
+func update_indices(pub *catalog.Publication) {
+	generate_product_index(pub)
+}
+
+func generate_product_index(pub *catalog.Publication) {
+
 }
 
 func enumerate_handler(w http.ResponseWriter, r *http.Request) {
@@ -203,19 +212,8 @@ func enumerate_handler(w http.ResponseWriter, r *http.Request) {
 		send_error(400, "Unkown environment", w)
 		return
 	}
-	context := env.Publisher
 
-	type Result struct {
-		Name   string `json:"name"`
-		Latest string `json:"ver"`
-	}
-	entries := make(map[string]*Result, 0)
-
-	for _, entry := range context.Catalog.Products {
-		entries[entry.Name] = &Result{Name: entry.Name, Latest: entry.Latest.ToString()}
-	}
-
-	send_object(200, entries, w)
+	send_object(200, env.Catalog, w)
 }
 
 func environment_handler(w http.ResponseWriter, r *http.Request) {
@@ -265,7 +263,8 @@ func load_configuration() (*Config, error) {
 }
 
 type EnvironmentInfo struct {
-	Publisher   *publisher.Publisher
+	//Publisher   *publisher.Publisher
+	Catalog     *catalog.Catalog
 	Environment Environment
 }
 
@@ -285,13 +284,14 @@ func main() {
 
 	for _, entry := range config.Environments {
 		fmt.Println(path.Join(entry.Path, "catalog.json"))
-		context, err := publisher.NewPublisher(path.Join(entry.Path, "catalog.json"))
+		context := catalog.NewCatalog()
 		if err != nil {
 			fmt.Println(err)
 			os.Exit(1)
 		}
-		fmt.Printf("Catalog with %d entries\n", len(context.Catalog.Products))
-		env := &EnvironmentInfo{Publisher: context, Environment: entry}
+		// TODO(brunoc) scan the environment tree
+		fmt.Printf("Catalog with %d entries\n", len(context.Products))
+		env := &EnvironmentInfo{Catalog: context, Environment: entry}
 		environments[entry.Name] = env
 		fmt.Printf("Initialized environment '%s' at '%s'\n", entry.Name, entry.Path)
 	}
@@ -320,10 +320,6 @@ func main() {
 
 	select {
 	case <-server_done:
-	}
-
-	for _, env := range environments {
-		env.Publisher.Save()
 	}
 }
 

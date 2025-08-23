@@ -4,9 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
-	"hash/maphash"
-	"io"
-	"os"
 	"path"
 	"regexp"
 	"strconv"
@@ -14,60 +11,68 @@ import (
 	"time"
 )
 
-type Language string
+type LanguageCode string
 
 const (
-	PT Language = "pt"
-	ES Language = "es"
-	EN Language = "en"
+	PT LanguageCode = "pt"
+	ES LanguageCode = "es"
+	EN LanguageCode = "en"
 )
 
-type FormatType string
+type FormatCode string
 
 const (
-	HTML FormatType = "html"
-	PDF  FormatType = "pdf"
-	TGZ  FormatType = "tgz"
+	HTML FormatCode = "html"
+	PDF  FormatCode = "pdf"
+	TGZ  FormatCode = "tgz"
 )
 
 type Catalog struct {
-	Products     map[string]*Product `json:"-"`
-	Publications []*Publication      `json:"pubs,omitempty"`
-	seed         maphash.Seed        `json:"-"`
+	Products map[string]*ProductEntry `json:"products"`
 }
 
-type Product struct {
-	Name         string  // unique product name (lowercase)
-	Latest       Version // latest version in semantic version format
-	Publications []*Publication
+type ProductEntry struct {
+	Name      string                          `json:"name"` // unique product name (lowercase)
+	Tainted   bool                            `json:"-"`
+	Languages map[LanguageCode]*LanguageEntry `json:"languages"` // indexed by language code
+}
+
+type LanguageEntry struct {
+	Language LanguageCode             `json:"-"`
+	Tainted  bool                     `json:"-"`
+	Latest   Version                  `json:"latest"`
+	Versions map[string]*VersionEntry `json:"versions"` // indexed by semantic version
+}
+
+type VersionEntry struct {
+	Version Version                     `json:"-"`
+	Tainted bool                        `json:"-"`
+	Formats map[FormatCode]*FormatEntry `json:"formats"` // indexed by format code
+}
+
+type FormatEntry struct {
+	Format FormatCode `json:"-"`
+	Path   string     `json:"path"`
 }
 
 type Publication struct {
-	Product  string     `json:"prod"` // unique product name (lowercase)
-	Version  Version    `json:"ver"`  // complete semantic version
-	Format   FormatType `json:"fmt"`
-	Language Language   `json:"lang"`
-	Date     time.Time  `json:"date"`
-	hash     uint64     `json:"-"`
+	Product  string       `json:"prod"` // unique product name (lowercase)
+	Version  Version      `json:"ver"`  // complete semantic version
+	Format   FormatCode   `json:"fmt"`
+	Language LanguageCode `json:"lang"`
+	Date     time.Time    `json:"date"`
+	hash     uint64       `json:"-"`
 }
 
-func (c *Catalog) add_product(pub *Publication) {
-	result := c.Products[pub.Product]
-	if result == nil {
-		result = &Product{Name: pub.Product, Publications: make([]*Publication, 0)}
-		c.Products[pub.Product] = result
-	}
-	result.Publications = append(result.Publications, pub)
-	if pub.Version.Newer(result.Latest) {
-		result.Latest = pub.Version
-	}
+func NewCatalog() *Catalog {
+	return &Catalog{make(map[string]*ProductEntry)}
 }
 
 func (p Publication) Validate() error {
 	if name_re == nil || !name_re.MatchString(p.Product) {
 		return fmt.Errorf("invalid product name")
 	}
-	if p.Language != "pt" && p.Language != "en" && p.Language != "es" {
+	if !p.Language.IsValid() {
 		return fmt.Errorf("unsupported language")
 	}
 	if !p.Format.IsValid() {
@@ -159,68 +164,24 @@ func (v Version) Newer(o Version) bool {
 	return v.Major > o.Major || v.Minor > o.Minor || v.Fix > o.Fix
 }
 
-func (v FormatType) IsValid() bool {
+func (v FormatCode) IsValid() bool {
 	return v == HTML || v == PDF || v == TGZ
 }
 
-func Open(fpath string) (*Catalog, error) {
-	output := &Catalog{seed: maphash.MakeSeed(), Products: make(map[string]*Product)}
-
-	info, err := os.Stat(fpath)
-	if err != nil {
-		return output, nil
-	} else if info.IsDir() {
-		return nil, fmt.Errorf("'%s' must be a regular file", fpath)
-	}
-
-	file, err := os.OpenFile(fpath, os.O_RDONLY, 0)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-
-	data, err := io.ReadAll(file)
-	if err != nil {
-		return nil, err
-	}
-
-	err = json.Unmarshal(data, &output)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, pub := range output.Publications {
-		output.add_product(pub)
-	}
-
-	return output, nil
+func (v LanguageCode) IsValid() bool {
+	return v == PT || v == ES || v == EN
 }
 
-func (c *Catalog) Save(fpath string) error {
+func (c *Catalog) Serialize() ([]byte, error) {
 	data, err := json.Marshal(c)
 	if err != nil {
-		return err
+		return nil, err
 	}
-
-	file, err := os.OpenFile(fpath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0755)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
-	_, err = file.Write(data)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func (p *Publication) metaPath() string {
-	return path.Join(p.Product, string(p.Format))
+	return data, nil
 }
 
 func (p *Publication) DataPath() string {
-	return path.Join(p.Product, string(p.Language), string(p.Version.Major), string(p.Version.Minor), string(p.Format))
+	return "/" + path.Join(p.Product, string(p.Language), p.Version.ToString(), string(p.Format))
 }
 
 func (p *Publication) Hash() uint64 {
@@ -229,25 +190,36 @@ func (p *Publication) Hash() uint64 {
 	}
 	h := fnv.New64a()
 	h.Write([]byte(p.Product))
-	h.Write([]byte(p.Format))
 	h.Write([]byte(p.Language))
 	h.Write([]byte(p.Version.ToString()))
+	h.Write([]byte(p.Format))
 	p.hash = h.Sum64()
 	return p.hash
 }
 
 func (c *Catalog) AddPublication(pub *Publication) {
-	hash := pub.Hash()
+	ok := false
+	var product *ProductEntry
+	var language *LanguageEntry
+	var version *VersionEntry
 
-	// TODO: add non-HTML publication only if there's a HTML publication in the same version
-
-	for i, item := range c.Publications {
-		if item.Hash() == hash {
-			c.Publications[i] = pub
-			return
-		}
+	if product, ok = c.Products[pub.Product]; !ok {
+		product = &ProductEntry{pub.Product, true, make(map[LanguageCode]*LanguageEntry, 0)}
+		c.Products[pub.Product] = product
 	}
 
-	c.Publications = append(c.Publications, pub)
-	c.add_product(pub)
+	if language, ok = product.Languages[pub.Language]; !ok {
+		language = &LanguageEntry{pub.Language, true, pub.Version, make(map[string]*VersionEntry, 0)}
+		product.Languages[pub.Language] = language
+	}
+
+	if version, ok = language.Versions[pub.Version.ToString()]; !ok {
+		version = &VersionEntry{pub.Version, true, make(map[FormatCode]*FormatEntry, 0)}
+		language.Versions[pub.Version.ToString()] = version
+	}
+
+	if _, ok = version.Formats[pub.Format]; !ok {
+		format := &FormatEntry{pub.Format, pub.DataPath()}
+		version.Formats[pub.Format] = format
+	}
 }

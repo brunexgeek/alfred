@@ -17,8 +17,7 @@ import (
 const MAX_PAYLOAD = 15 * 1024 * 1024
 
 type Publisher struct {
-	Catalog *catalog.Catalog
-	Path    string // path to the catalog in disk
+	Path string // path to the catalog in disk
 }
 
 type Summary struct {
@@ -26,21 +25,10 @@ type Summary struct {
 	Total int64 `json:"total"` // amount of disk space used to store the files
 }
 
-func NewPublisher(fpath string) (*Publisher, error) {
-	pub := Publisher{Path: fpath}
-	var err error
-	pub.Catalog, err = catalog.Open(fpath)
-	if err != nil {
+func Publish(root string, pub *catalog.Publication, input io.Reader) (*Summary, error) {
+	if err := pub.Validate(); err != nil {
 		return nil, err
 	}
-	return &pub, nil
-}
-
-func (p *Publisher) Save() error {
-	return p.Catalog.Save(p.Path)
-}
-
-func Publish(root string, pub *catalog.Publication, input io.Reader) (*Summary, error) {
 	data_path := path.Join(root, pub.DataPath())
 
 	err := os.MkdirAll(data_path, 0755)
@@ -57,7 +45,7 @@ func Publish(root string, pub *catalog.Publication, input io.Reader) (*Summary, 
 		if err != nil {
 			return nil, err
 		}
-		summary, err = extract(data_path, ustream, pub.Format)
+		summary, err = extract(data_path, ustream)
 		if err != nil {
 			return nil, err
 		}
@@ -72,7 +60,7 @@ func Publish(root string, pub *catalog.Publication, input io.Reader) (*Summary, 
 		case catalog.TGZ:
 			fname += "tar.gz"
 		default:
-			return nil, fmt.Errorf("Unsupported format")
+			return nil, fmt.Errorf("unsupported format")
 		}
 
 		summary, err = save_file(fname, input)
@@ -87,12 +75,12 @@ func Publish(root string, pub *catalog.Publication, input io.Reader) (*Summary, 
 func save_file(fpath string, input io.Reader) (*Summary, error) {
 	output, err := os.OpenFile(fpath, os.O_WRONLY|os.O_TRUNC|os.O_CREATE, 0755)
 	if err != nil {
-		return nil, fmt.Errorf("Unable to create file %s: %s", fpath, err.Error())
+		return nil, fmt.Errorf("unable to create file %s: %s", fpath, err.Error())
 	}
 	size, err := io.Copy(output, input)
 	output.Close()
 	if err != nil {
-		return nil, fmt.Errorf("Unable to copy data to %s: %s", fpath, err.Error())
+		return nil, fmt.Errorf("unable to copy data to %s: %s", fpath, err.Error())
 	}
 
 	return &Summary{Count: 1, Total: size}, nil
@@ -102,7 +90,7 @@ func save_file(fpath string, input io.Reader) (*Summary, error) {
 func inflate(gzstream io.Reader) (*bytes.Reader, error) {
 	stream, err := gzip.NewReader(gzstream)
 	if err != nil {
-		return nil, fmt.Errorf("Unable to open gzip stream %s", err.Error())
+		return nil, fmt.Errorf("unable to open gzip stream %s", err.Error())
 	}
 
 	data, err := extra.ReadAll(stream, MAX_PAYLOAD)
@@ -125,23 +113,23 @@ func deflate(ostream io.Writer, istream io.Reader) error {
 func deflate_to_file(fpath string, istream io.Reader) error {
 	file, err := os.OpenFile(fpath, os.O_WRONLY|os.O_TRUNC|os.O_CREATE, 0755)
 	if err != nil {
-		return fmt.Errorf("Unable to create file %s: %s", fpath, err.Error())
+		return fmt.Errorf("unable to create file %s: %s", fpath, err.Error())
 	}
 	err = deflate(file, istream)
 	if err != nil {
 		file.Close()
-		return fmt.Errorf("Unable to copy data to %s: %s", fpath, err.Error())
+		return fmt.Errorf("unable to copy data to %s: %s", fpath, err.Error())
 	}
 	file.Close()
 	return nil
 }
 
 // Validate a TAR package content
-func validate(stream *bytes.Reader, format catalog.FormatType) error {
+func validate(stream *bytes.Reader) error {
 	stream.Seek(0, io.SeekStart)
 	tarReader := tar.NewReader(stream)
 
-	for true {
+	for {
 		header, err := tarReader.Next()
 
 		if err == io.EOF {
@@ -149,19 +137,12 @@ func validate(stream *bytes.Reader, format catalog.FormatType) error {
 		}
 
 		if err != nil {
-			return fmt.Errorf("Error parsing TAR: %s", err.Error())
+			return fmt.Errorf("error parsing TAR: %s", err.Error())
 		}
 		if header.Typeflag != tar.TypeDir && header.Typeflag != tar.TypeReg {
-			return fmt.Errorf("Unsupported TAR entry %d of %s", header.Typeflag, header.Name)
+			return fmt.Errorf("unsupported TAR entry %d of %s", header.Typeflag, header.Name)
 		}
 
-		// files must be prefixed with the specified format (e.g. "html/" for "html")
-		// files with any other prefix will fail
-		//prefix := string(format) + "/"
-		//if !strings.HasPrefix(header.Name, prefix) {
-		//	return fmt.Errorf("Missing format prefix in one or more files")
-		//}
-		//npath := header.Name[len(prefix):]
 		// check for hidden files/directories
 		if strings.HasPrefix(header.Name, ".") {
 			return fmt.Errorf("payload must not contain hidden files")
@@ -175,8 +156,8 @@ func validate(stream *bytes.Reader, format catalog.FormatType) error {
 	return nil
 }
 
-func extract(dest string, stream *bytes.Reader, format catalog.FormatType) (*Summary, error) {
-	err := validate(stream, format)
+func extract(dest string, stream *bytes.Reader) (*Summary, error) {
+	err := validate(stream)
 	if err != nil {
 		return nil, err
 	}
@@ -192,16 +173,9 @@ func extract(dest string, stream *bytes.Reader, format catalog.FormatType) (*Sum
 		}
 
 		if err != nil {
-			return nil, fmt.Errorf("Error parsing TAR: %s", err.Error())
+			return nil, fmt.Errorf("error parsing TAR: %s", err.Error())
 		}
 
-		// files must be prefixed with the specified format (e.g. "html/" for "html")
-		// files with any other prefix will be ignored
-		//prefix := string(format) + "/"
-		//if !strings.HasPrefix(header.Name, prefix) {
-		//	continue
-		//}
-		//npath := header.Name[len(prefix):]
 		npath := header.Name
 		// ignore hidden files/directories
 		if strings.HasPrefix(npath, ".") {
@@ -211,18 +185,18 @@ func extract(dest string, stream *bytes.Reader, format catalog.FormatType) (*Sum
 		if header.Typeflag == tar.TypeDir {
 			target := path.Join(dest, npath)
 			if err := os.Mkdir(target, 0755); err != nil {
-				//return nil, fmt.Errorf("Unable to create directory '%s': %s", target, err.Error())
+				//return nil, fmt.Errorf("unable to create directory '%s': %s", target, err.Error())
 			}
 		} else {
 			//fmt.Printf("  Inflating %s\n", npath)
 			outFile, err := os.OpenFile(path.Join(dest, npath), os.O_WRONLY|os.O_TRUNC|os.O_CREATE, 0755)
 			if err != nil {
-				return nil, fmt.Errorf("Unable to create file %s: %s", npath, err.Error())
+				return nil, fmt.Errorf("unable to create file %s: %s", npath, err.Error())
 			}
 			size, err := io.Copy(outFile, tarReader)
 			outFile.Close()
 			if err != nil {
-				return nil, fmt.Errorf("Unable to copy data to %s: %s", npath, err.Error())
+				return nil, fmt.Errorf("unable to copy data to %s: %s", npath, err.Error())
 			}
 			summary.Count++
 			summary.Total += size
