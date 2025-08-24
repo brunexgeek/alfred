@@ -22,7 +22,7 @@ type Publisher struct {
 
 type Summary struct {
 	Count int   `json:"count"` // number of published files
-	Total int64 `json:"total"` // amount of disk space used to store the files
+	Size  int64 `json:"size"`  // amount of disk space used to store the files (bytes)
 }
 
 func Publish(root string, pub *catalog.Publication, input io.Reader) (*Summary, error) {
@@ -83,7 +83,7 @@ func save_file(fpath string, input io.Reader) (*Summary, error) {
 		return nil, fmt.Errorf("unable to copy data to %s: %s", fpath, err.Error())
 	}
 
-	return &Summary{Count: 1, Total: size}, nil
+	return &Summary{Count: 1, Size: size}, nil
 }
 
 // Inflate gzip content to memory
@@ -199,7 +199,7 @@ func extract(dest string, stream *bytes.Reader) (*Summary, error) {
 				return nil, fmt.Errorf("unable to copy data to %s: %s", npath, err.Error())
 			}
 			summary.Count++
-			summary.Total += size
+			summary.Size += size
 
 			// if we have an index file not completely in lower case
 			// we should copy the file (do not use links to avoid security

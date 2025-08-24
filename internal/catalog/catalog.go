@@ -3,7 +3,7 @@ package catalog
 import (
 	"encoding/json"
 	"fmt"
-	"hash/fnv"
+	"os"
 	"path"
 	"regexp"
 	"strconv"
@@ -27,19 +27,33 @@ const (
 	TGZ  FormatCode = "tgz"
 )
 
+type Environment struct {
+	Name    string            `json:"name"`
+	Path    string            `json:"path"`
+	Url     string            `json:"url"`
+	Strings map[string]string `json:"strings"`
+}
+
 type Catalog struct {
-	Products map[string]*ProductEntry `json:"products"`
+	Tainted     bool                     `json:"-"`
+	Url         string                   `json:"url"`
+	Environment *Environment             `json:"-"`
+	Products    map[string]*ProductEntry `json:"products"`
 }
 
 type ProductEntry struct {
-	Name      string                          `json:"name"` // unique product name (lowercase)
+	Id        string                          `json:"id"` // unique product name (lowercase)
 	Tainted   bool                            `json:"-"`
+	Path      string                          `json:"-"`
+	Url       string                          `json:"-"`
 	Languages map[LanguageCode]*LanguageEntry `json:"languages"` // indexed by language code
 }
 
 type LanguageEntry struct {
 	Language LanguageCode             `json:"-"`
 	Tainted  bool                     `json:"-"`
+	Path     string                   `json:"-"`
+	Url      string                   `json:"-"`
 	Latest   Version                  `json:"latest"`
 	Versions map[string]*VersionEntry `json:"versions"` // indexed by semantic version
 }
@@ -47,12 +61,16 @@ type LanguageEntry struct {
 type VersionEntry struct {
 	Version Version                     `json:"-"`
 	Tainted bool                        `json:"-"`
+	Path    string                      `json:"-"`
+	Url     string                      `json:"-"`
 	Formats map[FormatCode]*FormatEntry `json:"formats"` // indexed by format code
 }
 
 type FormatEntry struct {
-	Format FormatCode `json:"-"`
-	Path   string     `json:"path"`
+	Format  FormatCode `json:"-"`
+	Path    string     `json:"-"`
+	Url     string     `json:"-"`
+	RelPath string     `json:"path"`
 }
 
 type Publication struct {
@@ -61,11 +79,10 @@ type Publication struct {
 	Format   FormatCode   `json:"fmt"`
 	Language LanguageCode `json:"lang"`
 	Date     time.Time    `json:"date"`
-	hash     uint64       `json:"-"`
 }
 
-func NewCatalog() *Catalog {
-	return &Catalog{make(map[string]*ProductEntry)}
+func NewCatalog(env *Environment) *Catalog {
+	return &Catalog{true, env.Url, env, make(map[string]*ProductEntry)}
 }
 
 func (p Publication) Validate() error {
@@ -97,12 +114,12 @@ const RE_FORMAT = "(" + HTML + "|" + PDF + "|" + TGZ + ")"
 const RE_LANGUAGE = "(" + PT + "|" + ES + "|" + EN + ")"
 
 var name_re, _ = regexp.Compile("^" + RE_PRODUCT_NAME + "$")
-var full_re, _ = regexp.Compile("^[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}$")
+var full_re, _ = regexp.Compile(`^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$`)
 var short_re, _ = regexp.Compile("^" + RE_SHORT_VERSION + "$")
 
 func ParseVersion(value string) (Version, error) {
 	if !IsValid(value) {
-		return Version{}, fmt.Errorf("Invalid semantic version")
+		return Version{}, fmt.Errorf("invalid semantic version")
 	}
 	parts := strings.Split(value, ".")
 	result := Version{}
@@ -184,42 +201,265 @@ func (p *Publication) DataPath() string {
 	return "/" + path.Join(p.Product, string(p.Language), p.Version.ToString(), string(p.Format))
 }
 
-func (p *Publication) Hash() uint64 {
-	if p.hash != 0 {
-		return p.hash
-	}
-	h := fnv.New64a()
-	h.Write([]byte(p.Product))
-	h.Write([]byte(p.Language))
-	h.Write([]byte(p.Version.ToString()))
-	h.Write([]byte(p.Format))
-	p.hash = h.Sum64()
-	return p.hash
-}
-
 func (c *Catalog) AddPublication(pub *Publication) {
 	ok := false
 	var product *ProductEntry
 	var language *LanguageEntry
 	var version *VersionEntry
 
+	root := path.Join(c.Environment.Path, pub.Product)
+	url := strings.Join([]string{c.Url, pub.Product}, "/")
 	if product, ok = c.Products[pub.Product]; !ok {
-		product = &ProductEntry{pub.Product, true, make(map[LanguageCode]*LanguageEntry, 0)}
+		product = &ProductEntry{pub.Product, true, root, url, make(map[LanguageCode]*LanguageEntry, 0)}
 		c.Products[pub.Product] = product
+		c.Tainted = true
 	}
 
+	root = path.Join(root, string(pub.Language))
+	url = strings.Join([]string{url, string(pub.Language)}, "/")
 	if language, ok = product.Languages[pub.Language]; !ok {
-		language = &LanguageEntry{pub.Language, true, pub.Version, make(map[string]*VersionEntry, 0)}
+		language = &LanguageEntry{pub.Language, true, root, url, pub.Version, make(map[string]*VersionEntry, 0)}
 		product.Languages[pub.Language] = language
+		product.Tainted = true
 	}
 
+	root = path.Join(root, pub.Version.ToString())
+	url = strings.Join([]string{url, pub.Version.ToString()}, "/")
 	if version, ok = language.Versions[pub.Version.ToString()]; !ok {
-		version = &VersionEntry{pub.Version, true, make(map[FormatCode]*FormatEntry, 0)}
+		version = &VersionEntry{pub.Version, true, root, url, make(map[FormatCode]*FormatEntry, 0)}
 		language.Versions[pub.Version.ToString()] = version
+		language.Tainted = true
+	}
+	// try to update the latest version
+	if pub.Version.Newer(language.Latest) {
+		language.Latest = pub.Version
 	}
 
+	root = path.Join(root, string(pub.Format))
+	url = strings.Join([]string{url, string(pub.Format)}, "/")
 	if _, ok = version.Formats[pub.Format]; !ok {
-		format := &FormatEntry{pub.Format, pub.DataPath()}
+		format := &FormatEntry{pub.Format, root, url, pub.DataPath()}
 		version.Formats[pub.Format] = format
+		version.Tainted = true
 	}
+}
+
+func read_directory(root string) []os.DirEntry {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return []os.DirEntry{}
+	}
+	return entries
+}
+
+func (c *Catalog) ScanEnvironment(root string) {
+	// for each product
+	for _, entry := range read_directory(root) {
+		product := entry.Name()
+		if !entry.IsDir() || !name_re.MatchString(product) {
+			continue
+		}
+
+		// for each language
+		root := path.Join(root, product)
+		for _, entry := range read_directory(root) {
+			language := LanguageCode(entry.Name())
+			if !entry.IsDir() || !language.IsValid() {
+				continue
+			}
+
+			// for each version
+			root := path.Join(root, entry.Name())
+			for _, entry := range read_directory(root) {
+				version, err := ParseVersion(entry.Name())
+				if !entry.IsDir() || err != nil {
+					continue
+				}
+
+				// for each format
+				root := path.Join(root, entry.Name())
+				for _, entry := range read_directory(root) {
+					format := FormatCode(entry.Name())
+					if !entry.IsDir() || !format.IsValid() {
+						continue
+					}
+
+					pub := &Publication{
+						Product:  product,
+						Version:  version,
+						Format:   format,
+						Language: language,
+						Date:     time.Now(),
+					}
+					c.AddPublication(pub)
+				}
+			}
+		}
+	}
+}
+
+type Iterator struct {
+	Product  *ProductEntry
+	Language *LanguageEntry
+	Version  *VersionEntry
+	Format   *FormatEntry
+}
+
+func (c *Catalog) Iterate(it func(Iterator)) {
+	for _, product := range c.Products {
+		for _, language := range product.Languages {
+			for _, version := range language.Versions {
+				for _, format := range version.Formats {
+					it(Iterator{product, language, version, format})
+				}
+			}
+		}
+	}
+}
+
+func (p *ProductEntry) Iterate(it func(Iterator)) {
+	for _, language := range p.Languages {
+		for _, version := range language.Versions {
+			for _, format := range version.Formats {
+				it(Iterator{p, language, version, format})
+			}
+		}
+	}
+}
+
+func (l *LanguageEntry) Iterate(it func(Iterator)) {
+	for _, version := range l.Versions {
+		for _, format := range version.Formats {
+			it(Iterator{nil, l, version, format})
+		}
+	}
+}
+
+func (v *VersionEntry) Iterate(it func(Iterator)) {
+	for _, format := range v.Formats {
+		it(Iterator{nil, nil, v, format})
+	}
+}
+
+const INDEX_HEADER = `<!DOCTYPE html><html><head><title>%s</title><meta charset="utf-8"></head><body><h1>%s</h1><ul>`
+const INDEX_FOOTER = `</ul></body></html>`
+
+func (c *Catalog) UpdateWebIndices() {
+	if c.Tainted {
+		UpdateCatalogIndex(c)
+		c.Tainted = false
+	}
+
+	for _, product := range c.Products {
+		if product.Tainted {
+			UpdateProductIndex(product, c.Environment)
+			product.Tainted = false
+		}
+
+		for _, language := range product.Languages {
+			if language.Tainted {
+				UpdateLanguageIndex(language, c.Environment)
+				language.Tainted = false
+			}
+
+			for _, version := range language.Versions {
+				if version.Tainted {
+					UpdateVersionIndex(version, c.Environment)
+					version.Tainted = false
+				}
+			}
+		}
+	}
+}
+
+func UpdateCatalogIndex(c *Catalog) error {
+	filename := path.Join(c.Environment.Path, "index.html")
+	fmt.Printf("Updating index at '%s'\n", filename)
+	output, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
+	if err != nil {
+		fmt.Print(err.Error())
+		return err
+	}
+	defer output.Close()
+
+	title := c.Environment.Translate("Products")
+	output.WriteString(fmt.Sprintf(INDEX_HEADER, title, title))
+	for _, product := range c.Products {
+		title := c.Environment.Translate(product.Id)
+		output.WriteString(fmt.Sprintf("<li><a href='%s/%s'>%s</a></li>", c.Url, product.Id, title))
+	}
+	output.WriteString(INDEX_FOOTER)
+
+	return nil
+}
+
+func UpdateProductIndex(p *ProductEntry, env *Environment) error {
+	filename := path.Join(p.Path, "index.html")
+	fmt.Printf("Updating index at '%s'\n", filename)
+	output, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
+	if err != nil {
+		fmt.Print(err.Error())
+		return err
+	}
+	defer output.Close()
+
+	title := env.Translate("Languages")
+	output.WriteString(fmt.Sprintf(INDEX_HEADER, title, title))
+	for _, language := range p.Languages {
+		title := env.Translate(string(language.Language))
+		output.WriteString(fmt.Sprintf("<li><a href='%s/%s'>%s</a></li>", p.Url, string(language.Language), title))
+	}
+	output.WriteString(INDEX_FOOTER)
+
+	return nil
+}
+
+func UpdateLanguageIndex(l *LanguageEntry, env *Environment) error {
+	filename := path.Join(l.Path, "index.html")
+	fmt.Printf("Updating index at '%s'\n", filename)
+	output, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
+	if err != nil {
+		fmt.Print(err.Error())
+		return err
+	}
+	defer output.Close()
+
+	title := env.Translate("Versions")
+	output.WriteString(fmt.Sprintf(INDEX_HEADER, title, title))
+	for _, version := range l.Versions {
+		title := env.Translate(version.Version.ToString())
+		output.WriteString(fmt.Sprintf("<li><a href='%s/%s'>%s</a></li>", l.Url, version.Version.ToString(), title))
+	}
+	output.WriteString(INDEX_FOOTER)
+
+	return nil
+}
+
+func UpdateVersionIndex(v *VersionEntry, env *Environment) error {
+	filename := path.Join(v.Path, "index.html")
+	fmt.Printf("Updating index at '%s'\n", filename)
+	output, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
+	if err != nil {
+		fmt.Print(err.Error())
+		return err
+	}
+	defer output.Close()
+
+	title := env.Translate("Formats")
+	output.WriteString(fmt.Sprintf(INDEX_HEADER, title, title))
+	for _, format := range v.Formats {
+		title := env.Translate(string(format.Format))
+		output.WriteString(fmt.Sprintf("<li><a href='%s/%s'>%s</a></li>", v.Url, string(format.Format), title))
+	}
+	output.WriteString(INDEX_FOOTER)
+
+	return nil
+}
+
+func (e *Environment) Translate(expr string) string {
+	output, ok := e.Strings[expr]
+	if !ok {
+		return expr
+	}
+	return output
 }

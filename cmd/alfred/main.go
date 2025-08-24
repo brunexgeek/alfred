@@ -2,9 +2,9 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"embed"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -19,11 +19,8 @@ import (
 	"sync"
 	"time"
 
-	"log"
-
 	"cpqd.com.br/alfred/internal/catalog"
 	"cpqd.com.br/alfred/internal/extra"
-	ahttp "cpqd.com.br/alfred/internal/http"
 	"cpqd.com.br/alfred/internal/publisher"
 )
 
@@ -56,6 +53,7 @@ func write_json(obj any, w http.ResponseWriter) error {
 
 func send_object(status int, obj any, w http.ResponseWriter) error {
 	w.Header().Set("Server", server_version)
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	return write_json(obj, w)
 }
@@ -87,12 +85,12 @@ type Part struct {
 
 func extract_parts(r *http.Request) (map[string]Part, error) {
 	if r.Method != "POST" {
-		return nil, fmt.Errorf("Unsupported method")
+		return nil, fmt.Errorf("unsupported method")
 	}
 
 	mtype, params, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil || !strings.HasPrefix(mtype, "multipart/") {
-		return nil, fmt.Errorf("Expected multipart data")
+		return nil, fmt.Errorf("expected multipart data")
 	}
 
 	parts := make(map[string]Part, 0)
@@ -120,6 +118,7 @@ func extract_parts(r *http.Request) (map[string]Part, error) {
 type PublishRequest struct {
 	Environment string `json:"env"`
 	Product     string `json:"prod"`
+	Title       string `json:"title"`
 	Version     string `json:"ver"`
 	Format      string `json:"fmt"`
 	Language    string `json:"lang"`
@@ -188,20 +187,19 @@ func publish_handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// update catalog
-	env.Catalog.AddPublication(&pub)
-
+	env.AddPublication(&pub)
 	// update all index pages
-	update_indices(&pub)
+	env.UpdateWebIndices()
 
-	send_object(http.StatusOK, summary, w)
-}
+	var result struct {
+		publisher.Summary
+		URL string
+	}
+	result.Count = summary.Count
+	result.Size = summary.Size
+	result.URL = fmt.Sprintf("%s%s/", env.Environment.Url, pub.DataPath())
 
-func update_indices(pub *catalog.Publication) {
-	generate_product_index(pub)
-}
-
-func generate_product_index(pub *catalog.Publication) {
-
+	send_object(http.StatusOK, result, w)
 }
 
 func enumerate_handler(w http.ResponseWriter, r *http.Request) {
@@ -213,7 +211,7 @@ func enumerate_handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	send_object(200, env.Catalog, w)
+	send_object(200, env, w)
 }
 
 func environment_handler(w http.ResponseWriter, r *http.Request) {
@@ -244,7 +242,7 @@ func install_signal_hook() {
 		killme = true
 		go func() {
 			for _, server := range servers {
-				server.Shutdown(nil)
+				server.Shutdown(context.TODO())
 			}
 			server_done <- 1
 		}()
@@ -262,13 +260,14 @@ func load_configuration() (*Config, error) {
 	return OpenConfiguration(cpath)
 }
 
-type EnvironmentInfo struct {
-	//Publisher   *publisher.Publisher
-	Catalog     *catalog.Catalog
-	Environment Environment
-}
-
-var environments = make(map[string]*EnvironmentInfo)
+/*
+	type EnvironmentInfo struct {
+		//Publisher   *publisher.Publisher
+		Catalog     *catalog.Catalog
+		Environment *Environment
+	}
+*/
+var environments = make(map[string]*catalog.Catalog)
 
 func main() {
 	install_signal_hook()
@@ -283,27 +282,17 @@ func main() {
 	}
 
 	for _, entry := range config.Environments {
-		fmt.Println(path.Join(entry.Path, "catalog.json"))
-		context := catalog.NewCatalog()
+		context := catalog.NewCatalog(entry)
 		if err != nil {
 			fmt.Println(err)
 			os.Exit(1)
 		}
-		// TODO(brunoc) scan the environment tree
-		fmt.Printf("Catalog with %d entries\n", len(context.Products))
-		env := &EnvironmentInfo{Catalog: context, Environment: entry}
-		environments[entry.Name] = env
-		fmt.Printf("Initialized environment '%s' at '%s'\n", entry.Name, entry.Path)
-	}
+		context.ScanEnvironment(entry.Path)
+		fmt.Printf("Catalog with %d products\n", len(context.Products))
+		context.UpdateWebIndices()
 
-	for i, server := range servers {
-		go func(env Environment, server *http.Server) {
-			fmt.Printf("[%s] Listening at %s:%d\n", env.Name, env.Host, env.Port)
-			err := server.ListenAndServe()
-			if err != nil && !errors.Is(err, http.ErrServerClosed) {
-				fmt.Printf("[%s] Error listening at %s:%d\n", env.Name, env.Host, env.Port)
-			}
-		}(config.Environments[i], server)
+		environments[entry.Name] = context
+		fmt.Printf("Initialized environment '%s' at '%s'\n", entry.Name, entry.Path)
 	}
 
 	// start API
@@ -312,7 +301,7 @@ func main() {
 	mux.HandleFunc(PUBLISH_ENDPOINT, publish_handler)
 	mux.HandleFunc(ENUMERATE_ENDPOINT, enumerate_handler)
 	mux.HandleFunc(ENVIRONMENTS_ENDPOINT, environment_handler)
-	mux.Handle(WEB_ENDPOINT, ahttp.FileServer(http.FS(resources)))
+	mux.Handle(WEB_ENDPOINT, http.FileServer(http.FS(resources)))
 	server := &http.Server{Addr: address, Handler: mux}
 	go server.ListenAndServe()
 	fmt.Printf("[API] Listening at http://%s\n", address)
@@ -343,7 +332,7 @@ var globals = GlobalValues{proxies: make([]string, 0)}
 
 func initialize_globals() error {
 	var err error
-	globals.block_regex, err = regexp.Compile("/\\..|catalog.json$")
+	globals.block_regex, err = regexp.Compile(`/\..|catalog.json$`)
 	if err != nil {
 		return err
 	}
@@ -366,35 +355,29 @@ func initialize_globals() error {
 	return nil
 }
 
-type FilteredServer struct {
-	Root      string
-	server    http.Handler
-	Publisher *publisher.Publisher
-}
+func GetRealAddress(r *http.Request, proxies []string) string {
+	address := strings.Split(r.RemoteAddr, ":")[0]
 
-func NewFilteredServer(root string, pub *publisher.Publisher) FilteredServer {
-	if strings.HasSuffix(root, "/") {
-		root = root[:1]
+	if xff := r.Header.Get("X-Forwarded-For"); proxies != nil && len(xff) != 0 {
+		entries := strings.Split(xff, ",")
+		for i := range entries {
+			entries[i] = strings.TrimSpace(entries[i])
+		}
+		for i := len(entries) - 1; i >= 0; i++ {
+			if !IsKnownProxy(entries[i], proxies) {
+				return entries[i]
+			}
+		}
 	}
-	return FilteredServer{
-		Root:      root,
-		server:    ahttp.FileServer(http.Dir(root)),
-		Publisher: pub,
+
+	return address
+}
+
+func IsKnownProxy(host string, proxies []string) bool {
+	for j := range proxies {
+		if host == proxies[j] {
+			return true
+		}
 	}
-}
-
-func (h FilteredServer) log_info(r *http.Request, msg string) {
-	const mask = "[%s] %s\n"
-	log.Printf(mask, ahttp.GetRealAddress(r, globals.proxies), msg)
-}
-
-func (h FilteredServer) log_error(r *http.Request, status int, msg string) {
-	const mask = "[%s] %d '%s' %s\n"
-	log.Printf(mask, ahttp.GetRealAddress(r, globals.proxies), status, r.URL.Path, msg)
-}
-
-func (h FilteredServer) redirect_to(w http.ResponseWriter, url string) {
-	w.Header().Add("Content-Length", "0")
-	w.Header().Add("Location", url)
-	w.WriteHeader(302)
+	return false
 }
