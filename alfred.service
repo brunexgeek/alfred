@@ -1,0 +1,11 @@
+[Unit]
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=www-data
+Group=www-data
+ExecStart=/opt/alfred/alfred
+
+[Install]
+WantedBy=default.target

@@ -249,24 +249,20 @@ func install_signal_hook() {
 	}()
 }
 
-func load_configuration() (*Config, error) {
+func default_config() (string, error) {
 	tmp, err := filepath.Abs(filepath.Dir(os.Args[0]))
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	cpath := path.Join(tmp, "config.json")
-	fmt.Printf("Loading configuration from '%s'\n", cpath)
+	return cpath, nil
+}
 
+func load_configuration(cpath string) (*Config, error) {
+	fmt.Printf("Loading configuration from '%s'\n", cpath)
 	return OpenConfiguration(cpath)
 }
 
-/*
-	type EnvironmentInfo struct {
-		//Publisher   *publisher.Publisher
-		Catalog     *catalog.Catalog
-		Environment *Environment
-	}
-*/
 var environments = make(map[string]*catalog.Catalog)
 
 func main() {
@@ -275,7 +271,19 @@ func main() {
 
 	fmt.Printf("Alfred %s\n", ALFRED_VERSION)
 
-	config, err := load_configuration()
+	cpath := ""
+	if len(os.Args) == 1 {
+		var err error
+		cpath, err = default_config()
+		if err != nil {
+			fmt.Println(err)
+			os.Exit(1)
+		}
+	} else {
+		cpath = os.Args[1]
+	}
+
+	config, err := load_configuration(cpath)
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(1)

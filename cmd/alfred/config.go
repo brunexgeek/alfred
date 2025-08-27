@@ -25,7 +25,7 @@ func OpenConfiguration(fpath string) (*Config, error) {
 
 	info, err := os.Stat(fpath)
 	if err != nil {
-		return output, nil
+		return nil, err
 	} else if info.IsDir() {
 		return nil, fmt.Errorf("'%s' must be a regular file", fpath)
 	}
