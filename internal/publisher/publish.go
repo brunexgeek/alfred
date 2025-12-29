@@ -147,10 +147,6 @@ func validate(stream *bytes.Reader) error {
 		if strings.HasPrefix(header.Name, ".") {
 			return fmt.Errorf("payload must not contain hidden files")
 		}
-		// check for object inventory
-		if strings.HasSuffix(header.Name, "objects.inv") {
-			return fmt.Errorf("payload must not contain 'object.inv' file")
-		}
 	}
 	stream.Seek(0, io.SeekStart)
 	return nil
