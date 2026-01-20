@@ -46,10 +46,10 @@ func OpenConfiguration(fpath string) (*Config, error) {
 		return nil, err
 	}
 
-	return validate_and_return(output)
+	return validate_and_return(fpath, output)
 }
 
-func validate_and_return(config *Config) (*Config, error) {
+func validate_and_return(cpath string, config *Config) (*Config, error) {
 	if len(config.Manager.Host) == 0 {
 		return nil, fmt.Errorf("missing entry 'manager.host'")
 	}

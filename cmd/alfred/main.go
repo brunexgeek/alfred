@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"mime"
 	"mime/multipart"
 	"net/http"
@@ -303,13 +304,15 @@ func main() {
 		fmt.Printf("Initialized environment '%s' at '%s'\n", entry.Name, entry.Path)
 	}
 
+	stripped, _ := fs.Sub(resources, "web")
+
 	// start API
 	address := fmt.Sprintf("%s:%d", config.Manager.Host, config.Manager.Port)
 	mux := http.NewServeMux()
 	mux.HandleFunc(PUBLISH_ENDPOINT, publish_handler)
 	mux.HandleFunc(ENUMERATE_ENDPOINT, enumerate_handler)
 	mux.HandleFunc(ENVIRONMENTS_ENDPOINT, environment_handler)
-	mux.Handle(WEB_ENDPOINT, http.FileServer(http.FS(resources)))
+	mux.Handle(WEB_ENDPOINT, http.FileServer(http.FS(stripped)))
 	server := &http.Server{Addr: address, Handler: mux}
 	go server.ListenAndServe()
 	fmt.Printf("[API] Listening at http://%s\n", address)

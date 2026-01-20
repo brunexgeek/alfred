@@ -28,10 +28,11 @@ const (
 )
 
 type Environment struct {
-	Name    string            `json:"name"`
-	Path    string            `json:"path"`
-	Url     string            `json:"url"`
-	Strings map[string]string `json:"strings"`
+	Name     string            `json:"name"`
+	Path     string            `json:"path"`
+	Url      string            `json:"url"`
+	ExtraCss []string          `json:"extra_css"`
+	Strings  map[string]string `json:"strings"`
 }
 
 type Catalog struct {
@@ -341,9 +342,6 @@ func (v *VersionEntry) Iterate(it func(Iterator)) {
 	}
 }
 
-const INDEX_HEADER = `<!DOCTYPE html><html><head><title>%s</title><meta charset="utf-8"></head><body><h1>%s</h1><ul>`
-const INDEX_FOOTER = `</ul></body></html>`
-
 func (c *Catalog) UpdateWebIndices() {
 	if c.Tainted {
 		UpdateCatalogIndex(c)
@@ -372,6 +370,24 @@ func (c *Catalog) UpdateWebIndices() {
 	}
 }
 
+func write_header(output *os.File, env *Environment, title string) {
+
+	output.WriteString("<!DOCTYPE html><html><head>")
+	if len(env.ExtraCss) > 0 {
+		for _, css := range env.ExtraCss {
+			output.WriteString(fmt.Sprintf("<link rel='stylesheet' type='text/css' href='%s'/>", css))
+		}
+	}
+
+	title = env.Translate(title)
+	output.WriteString(fmt.Sprintf(`<title>%s</title><meta charset="utf-8"></head><body><h1>%s</h1><ul>`,
+		title, title))
+}
+
+func write_footer(output *os.File) {
+	output.WriteString(`</ul></body></html>`)
+}
+
 func UpdateCatalogIndex(c *Catalog) error {
 	filename := path.Join(c.Environment.Path, "index.html")
 	fmt.Printf("Updating index at '%s'\n", filename)
@@ -382,13 +398,12 @@ func UpdateCatalogIndex(c *Catalog) error {
 	}
 	defer output.Close()
 
-	title := c.Environment.Translate("Products")
-	output.WriteString(fmt.Sprintf(INDEX_HEADER, title, title))
+	write_header(output, c.Environment, "Products")
 	for _, product := range c.Products {
 		title := c.Environment.Translate(product.Id)
 		output.WriteString(fmt.Sprintf("<li><a href='%s/%s'>%s</a></li>", c.Url, product.Id, title))
 	}
-	output.WriteString(INDEX_FOOTER)
+	write_footer(output)
 
 	return nil
 }
@@ -403,13 +418,12 @@ func UpdateProductIndex(p *ProductEntry, env *Environment) error {
 	}
 	defer output.Close()
 
-	title := env.Translate("Languages")
-	output.WriteString(fmt.Sprintf(INDEX_HEADER, title, title))
+	write_header(output, env, "Languages")
 	for _, language := range p.Languages {
 		title := env.Translate(string(language.Language))
 		output.WriteString(fmt.Sprintf("<li><a href='%s/%s'>%s</a></li>", p.Url, string(language.Language), title))
 	}
-	output.WriteString(INDEX_FOOTER)
+	write_footer(output)
 
 	return nil
 }
@@ -424,13 +438,12 @@ func UpdateLanguageIndex(l *LanguageEntry, env *Environment) error {
 	}
 	defer output.Close()
 
-	title := env.Translate("Versions")
-	output.WriteString(fmt.Sprintf(INDEX_HEADER, title, title))
+	write_header(output, env, "Versions")
 	for _, version := range l.Versions {
 		title := env.Translate(version.Version.ToString())
 		output.WriteString(fmt.Sprintf("<li><a href='%s/%s'>%s</a></li>", l.Url, version.Version.ToString(), title))
 	}
-	output.WriteString(INDEX_FOOTER)
+	write_footer(output)
 
 	return nil
 }
@@ -445,13 +458,12 @@ func UpdateVersionIndex(v *VersionEntry, env *Environment) error {
 	}
 	defer output.Close()
 
-	title := env.Translate("Formats")
-	output.WriteString(fmt.Sprintf(INDEX_HEADER, title, title))
+	write_header(output, env, "Formats")
 	for _, format := range v.Formats {
 		title := env.Translate(string(format.Format))
 		output.WriteString(fmt.Sprintf("<li><a href='%s/%s'>%s</a></li>", v.Url, string(format.Format), title))
 	}
-	output.WriteString(INDEX_FOOTER)
+	write_footer(output)
 
 	return nil
 }
