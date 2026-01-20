@@ -3,6 +3,7 @@ package catalog
 import (
 	"encoding/json"
 	"fmt"
+	"html/template"
 	"os"
 	"path"
 	"regexp"
@@ -28,11 +29,18 @@ const (
 )
 
 type Environment struct {
-	Name     string            `json:"name"`
-	Path     string            `json:"path"`
-	Url      string            `json:"url"`
-	ExtraCss []string          `json:"extra_css"`
-	Strings  map[string]string `json:"strings"`
+	Name      string            `json:"name"`
+	Path      string            `json:"path"`
+	Url       string            `json:"url"`
+	Templates Templates         `json:"templates"`
+	Strings   map[string]string `json:"strings"`
+}
+
+type Templates struct {
+	Products  string `json:"products"`
+	Languages string `json:"languages"`
+	Versions  string `json:"versions"`
+	Formats   string `json:"formats"`
 }
 
 type Catalog struct {
@@ -370,102 +378,100 @@ func (c *Catalog) UpdateWebIndices() {
 	}
 }
 
-func write_header(output *os.File, env *Environment, title string) {
+type MenuItem struct {
+	Title string
+	Url   string
+}
 
-	output.WriteString("<!DOCTYPE html><html><head>")
-	if len(env.ExtraCss) > 0 {
-		for _, css := range env.ExtraCss {
-			output.WriteString(fmt.Sprintf("<link rel='stylesheet' type='text/css' href='%s'/>", css))
+type Context struct {
+	Menu  []MenuItem
+	Title string
+}
+
+func writePage(fpath string, tpath string, context *Context) error {
+	output, err := os.OpenFile(fpath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
+	if err != nil {
+		fmt.Print(err.Error())
+		return err
+	}
+	defer output.Close()
+
+	fmt.Printf("Updating index at '%s'\n", fpath)
+
+	if len(fpath) > 0 {
+		t, err := template.ParseFiles(tpath)
+		if err == nil {
+			err = t.Execute(output, context)
+			if err == nil {
+				return err
+			}
+			return nil
 		}
 	}
 
-	title = env.Translate(title)
-	output.WriteString(fmt.Sprintf(`<title>%s</title><meta charset="utf-8"></head><body><h1>%s</h1><ul>`,
-		title, title))
-}
+	// fallback to a simple HTML page
+	const PAGE_HEADER = `<!DOCTYPE html><html><head><title>%s</title><meta charset="utf-8"></head><body><h1>%s</h1><ul>`
+	output.WriteString(fmt.Sprintf(PAGE_HEADER, context.Title, context.Title))
 
-func write_footer(output *os.File) {
-	output.WriteString(`</ul></body></html>`)
+	for _, item := range context.Menu {
+		const PAGE_ITEM = "<li><a href='%s'>%s</a></li>"
+		output.WriteString(fmt.Sprintf(PAGE_ITEM, item.Url, item.Title))
+	}
+
+	const PAGE_FOOTER = `</ul></body></html>`
+	output.WriteString(PAGE_FOOTER)
+
+	return nil
 }
 
 func UpdateCatalogIndex(c *Catalog) error {
-	filename := path.Join(c.Environment.Path, "index.html")
-	fmt.Printf("Updating index at '%s'\n", filename)
-	output, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
-	if err != nil {
-		fmt.Print(err.Error())
-		return err
-	}
-	defer output.Close()
-
-	write_header(output, c.Environment, "Products")
+	context := &Context{Title: c.Environment.Translate("Products")}
 	for _, product := range c.Products {
-		title := c.Environment.Translate(product.Id)
-		output.WriteString(fmt.Sprintf("<li><a href='%s/%s'>%s</a></li>", c.Url, product.Id, title))
+		item := MenuItem{Title: c.Environment.Translate(product.Id), Url: fmt.Sprintf("%s/%s", c.Url, product.Id)}
+		context.Menu = append(context.Menu, item)
 	}
-	write_footer(output)
 
-	return nil
+	filename := path.Join(c.Environment.Path, "index.html")
+	return writePage(filename, c.Environment.Templates.Products, context)
 }
 
 func UpdateProductIndex(p *ProductEntry, env *Environment) error {
-	filename := path.Join(p.Path, "index.html")
-	fmt.Printf("Updating index at '%s'\n", filename)
-	output, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
-	if err != nil {
-		fmt.Print(err.Error())
-		return err
-	}
-	defer output.Close()
-
-	write_header(output, env, "Languages")
+	context := &Context{Title: env.Translate("Languages")}
 	for _, language := range p.Languages {
-		title := env.Translate(string(language.Language))
-		output.WriteString(fmt.Sprintf("<li><a href='%s/%s'>%s</a></li>", p.Url, string(language.Language), title))
+		item := MenuItem{
+			Title: env.Translate(string(language.Language)),
+			Url:   fmt.Sprintf("%s/%s", p.Url, string(language.Language))}
+		context.Menu = append(context.Menu, item)
 	}
-	write_footer(output)
 
-	return nil
+	filename := path.Join(p.Path, "index.html")
+	return writePage(filename, env.Templates.Languages, context)
 }
 
 func UpdateLanguageIndex(l *LanguageEntry, env *Environment) error {
-	filename := path.Join(l.Path, "index.html")
-	fmt.Printf("Updating index at '%s'\n", filename)
-	output, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
-	if err != nil {
-		fmt.Print(err.Error())
-		return err
-	}
-	defer output.Close()
-
-	write_header(output, env, "Versions")
+	context := &Context{Title: env.Translate("Versions")}
 	for _, version := range l.Versions {
-		title := env.Translate(version.Version.ToString())
-		output.WriteString(fmt.Sprintf("<li><a href='%s/%s'>%s</a></li>", l.Url, version.Version.ToString(), title))
+		item := MenuItem{
+			Title: env.Translate(version.Version.ToString()),
+			Url:   fmt.Sprintf("%s/%s", l.Url, version.Version.ToString())}
+		context.Menu = append(context.Menu, item)
 	}
-	write_footer(output)
 
-	return nil
+	filename := path.Join(l.Path, "index.html")
+	return writePage(filename, env.Templates.Versions, context)
 }
 
 func UpdateVersionIndex(v *VersionEntry, env *Environment) error {
-	filename := path.Join(v.Path, "index.html")
-	fmt.Printf("Updating index at '%s'\n", filename)
-	output, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
-	if err != nil {
-		fmt.Print(err.Error())
-		return err
-	}
-	defer output.Close()
-
-	write_header(output, env, "Formats")
+	context := &Context{Title: env.Translate("Formats")}
 	for _, format := range v.Formats {
-		title := env.Translate(string(format.Format))
-		output.WriteString(fmt.Sprintf("<li><a href='%s/%s'>%s</a></li>", v.Url, string(format.Format), title))
+		item := MenuItem{
+			Title: env.Translate(string(format.Format)),
+			Url:   fmt.Sprintf("%s/%s", v.Url, string(format.Format))}
+		context.Menu = append(context.Menu, item)
 	}
-	write_footer(output)
 
-	return nil
+	filename := path.Join(v.Path, "index.html")
+	return writePage(filename, env.Templates.Formats, context)
 }
 
 func (e *Environment) Translate(expr string) string {

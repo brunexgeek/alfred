@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path"
+	"path/filepath"
 	"strings"
 
 	"cpqd.com.br/alfred/internal/catalog"
@@ -13,6 +15,7 @@ import (
 type Config struct {
 	Manager      Manager                `json:"manager"`
 	Environments []*catalog.Environment `json:"environments"`
+	Location     string
 }
 
 type Manager struct {
@@ -21,7 +24,15 @@ type Manager struct {
 }
 
 func OpenConfiguration(fpath string) (*Config, error) {
-	output := &Config{}
+	if !path.IsAbs(fpath) {
+		var err error
+		fpath, err = filepath.Abs(fpath)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	output := &Config{Location: fpath}
 
 	info, err := os.Stat(fpath)
 	if err != nil {
@@ -47,6 +58,24 @@ func OpenConfiguration(fpath string) (*Config, error) {
 	}
 
 	return validate_and_return(fpath, output)
+}
+
+func make_absolute(fpath string, root string) (string, error) {
+	if len(fpath) == 0 {
+		return "", nil
+	}
+	if !path.IsAbs(fpath) {
+		fpath = filepath.Clean(path.Join(root, fpath))
+	}
+
+	info, err := os.Stat(fpath)
+	if err != nil {
+		return "", fmt.Errorf("unable to stat path '%s'", fpath)
+	} else if info.IsDir() {
+		return "", fmt.Errorf("'%s' must be a regular file", fpath)
+	}
+
+	return fpath, nil
 }
 
 func validate_and_return(cpath string, config *Config) (*Config, error) {
@@ -79,6 +108,25 @@ func validate_and_return(cpath string, config *Config) (*Config, error) {
 			return nil, fmt.Errorf("missing 'url' for environment '%s'", env.Name)
 		}
 		env.Url = strings.TrimSuffix(env.Url, "/")
+
+		// validate HTML templates
+		root := path.Dir(config.Location)
+		env.Templates.Products, err = make_absolute(env.Templates.Products, root)
+		if err != nil {
+			return nil, err
+		}
+		env.Templates.Languages, err = make_absolute(env.Templates.Languages, root)
+		if err != nil {
+			return nil, err
+		}
+		env.Templates.Versions, err = make_absolute(env.Templates.Versions, root)
+		if err != nil {
+			return nil, err
+		}
+		env.Templates.Formats, err = make_absolute(env.Templates.Formats, root)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return config, nil
