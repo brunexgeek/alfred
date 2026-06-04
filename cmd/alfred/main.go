@@ -198,7 +198,7 @@ func publish_handler(w http.ResponseWriter, r *http.Request) {
 	}
 	result.Count = summary.Count
 	result.Size = summary.Size
-	result.URL = fmt.Sprintf("%s%s/", env.Environment.Url, pub.DataPath())
+	result.URL = fmt.Sprintf("%s/", pub.DataPath())
 
 	send_object(http.StatusOK, result, w)
 }

@@ -6,7 +6,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"strings"
 
 	"cpqd.com.br/alfred/internal/catalog"
 	"cpqd.com.br/alfred/internal/extra"
@@ -103,11 +102,6 @@ func validate_and_return(cpath string, config *Config) (*Config, error) {
 		} else if !info.IsDir() {
 			return nil, fmt.Errorf("'%s' must be a regular directory", env.Path)
 		}
-
-		if len(env.Url) == 0 {
-			return nil, fmt.Errorf("missing 'url' for environment '%s'", env.Name)
-		}
-		env.Url = strings.TrimSuffix(env.Url, "/")
 
 		// validate HTML templates
 		root := path.Dir(config.Location)

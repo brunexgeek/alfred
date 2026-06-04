@@ -31,7 +31,6 @@ const (
 type Environment struct {
 	Name      string            `json:"name"`
 	Path      string            `json:"path"`
-	Url       string            `json:"url"`
 	Templates Templates         `json:"templates"`
 	Strings   map[string]string `json:"strings"`
 }
@@ -45,7 +44,6 @@ type Templates struct {
 
 type Catalog struct {
 	Tainted     bool                     `json:"-"`
-	Url         string                   `json:"url"`
 	Environment *Environment             `json:"-"`
 	Products    map[string]*ProductEntry `json:"products"`
 }
@@ -91,7 +89,7 @@ type Publication struct {
 }
 
 func NewCatalog(env *Environment) *Catalog {
-	return &Catalog{true, env.Url, env, make(map[string]*ProductEntry)}
+	return &Catalog{true, env, make(map[string]*ProductEntry)}
 }
 
 func (p Publication) Validate() error {
@@ -111,9 +109,10 @@ func (p Publication) Validate() error {
 }
 
 type Version struct {
-	Major int `json:"major"`
-	Minor int `json:"minor"`
-	Fix   int `json:"fix"`
+	Major int    `json:"major"`
+	Minor int    `json:"minor"`
+	Fix   int    `json:"fix"`
+	Tag   string `json:"tag"`
 }
 
 const RE_PRODUCT_NAME = "([a-z][a-z0-9_]{0,31})"
@@ -217,7 +216,7 @@ func (c *Catalog) AddPublication(pub *Publication) {
 	var version *VersionEntry
 
 	root := path.Join(c.Environment.Path, pub.Product)
-	url := strings.Join([]string{c.Url, pub.Product}, "/")
+	url := strings.Join([]string{".", pub.Product}, "/")
 	if product, ok = c.Products[pub.Product]; !ok {
 		product = &ProductEntry{pub.Product, true, root, url, make(map[LanguageCode]*LanguageEntry, 0)}
 		c.Products[pub.Product] = product
@@ -450,7 +449,7 @@ func createProductMenu(c *Catalog) ([]*MenuItem, error) {
 
 		item := &MenuItem{
 			Title:    c.Environment.Translate(product.Id),
-			Url:      fmt.Sprintf("%s/%s", c.Url, product.Id),
+			Url:      product.Id,
 			Children: children,
 		}
 		menu = append(menu, item)
@@ -469,7 +468,7 @@ func createLanguageMenu(c *Catalog, p *ProductEntry) ([]*MenuItem, error) {
 
 		item := &MenuItem{
 			Title:    c.Environment.Translate(string(language.Language)),
-			Url:      fmt.Sprintf("%s/%s", p.Url, string(language.Language)),
+			Url:      string(language.Language),
 			Children: children,
 		}
 		menu = append(menu, item)
@@ -488,7 +487,7 @@ func createVersionMenu(c *Catalog, l *LanguageEntry) ([]*MenuItem, error) {
 
 		item := &MenuItem{
 			Title:    c.Environment.Translate(version.Version.ToString()),
-			Url:      fmt.Sprintf("%s/%s", l.Url, version.Version.ToString()),
+			Url:      version.Version.ToString(),
 			Children: children,
 		}
 		menu = append(menu, item)
@@ -501,7 +500,7 @@ func createFormatMenu(c *Catalog, v *VersionEntry) ([]*MenuItem, error) {
 	for _, format := range v.Formats {
 		item := &MenuItem{
 			Title: c.Environment.Translate(string(format.Format)),
-			Url:   fmt.Sprintf("%s/%s", v.Url, string(format.Format)),
+			Url:   string(format.Format),
 		}
 		menu = append(menu, item)
 	}
