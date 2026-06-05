@@ -19,9 +19,10 @@ import (
 	"sync"
 	"time"
 
-	"cpqd.com.br/alfred/internal/catalog"
-	"cpqd.com.br/alfred/internal/extra"
-	"cpqd.com.br/alfred/internal/publisher"
+	"brunexgeek/alfred/internal/catalog"
+	"brunexgeek/alfred/internal/extra"
+	"brunexgeek/alfred/internal/language"
+	"brunexgeek/alfred/internal/publisher"
 )
 
 //go:embed web/index.html
@@ -157,7 +158,7 @@ func publish_handler(w http.ResponseWriter, r *http.Request) {
 		Product:  strings.ToLower(request.Product),
 		Version:  version,
 		Format:   catalog.FormatCode(request.Format),
-		Language: catalog.LanguageCode(request.Language),
+		Language: language.LanguageCode(request.Language),
 		Date:     time.Now(),
 	}
 
@@ -179,7 +180,10 @@ func publish_handler(w http.ResponseWriter, r *http.Request) {
 	// update catalog
 	env.AddPublication(&pub)
 	// update all index pages
-	env.UpdateWebIndices()
+	err = env.UpdateWebIndices()
+	if err != nil {
+		fmt.Printf("ERROR %s\n", err)
+	}
 
 	var result struct {
 		publisher.Summary
@@ -265,7 +269,7 @@ func main() {
 		var err error
 		cpath, err = default_config()
 		if err != nil {
-			fmt.Println(err)
+			fmt.Printf("ERROR %s\n", err)
 			os.Exit(1)
 		}
 	} else {
@@ -274,19 +278,23 @@ func main() {
 
 	config, err := load_configuration(cpath)
 	if err != nil {
-		fmt.Println(err)
+		fmt.Printf("ERROR %s\n", err)
 		os.Exit(1)
 	}
 
 	for _, entry := range config.Environments {
 		context := catalog.NewCatalog(entry)
 		if err != nil {
-			fmt.Println(err)
+			fmt.Printf("ERROR %s\n", err)
 			os.Exit(1)
 		}
 		context.ScanEnvironment(entry.Path)
 		fmt.Printf("Catalog with %d products\n", len(context.Products))
-		context.UpdateWebIndices()
+		err = context.UpdateWebIndices()
+		if err != nil {
+			fmt.Printf("ERROR %s\n", err)
+			os.Exit(1)
+		}
 
 		environments[entry.Name] = context
 		fmt.Printf("Initialized environment '%s' at '%s'\n", entry.Name, entry.Path)

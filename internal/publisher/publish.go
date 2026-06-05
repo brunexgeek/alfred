@@ -2,6 +2,8 @@ package publisher
 
 import (
 	"archive/tar"
+	"brunexgeek/alfred/internal/catalog"
+	"brunexgeek/alfred/internal/extra"
 	"bytes"
 	"compress/gzip"
 	"fmt"
@@ -9,12 +11,9 @@ import (
 	"os"
 	"path"
 	"strings"
-
-	"cpqd.com.br/alfred/internal/catalog"
-	"cpqd.com.br/alfred/internal/extra"
 )
 
-const MAX_PAYLOAD = 15 * 1024 * 1024
+const MAX_PAYLOAD = 50 * 1024 * 1024
 
 type Publisher struct {
 	Path string // path to the catalog in disk

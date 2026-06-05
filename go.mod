@@ -1,3 +1,3 @@
-module cpqd.com.br/alfred
+module brunexgeek/alfred
 
 go 1.19

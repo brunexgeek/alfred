@@ -1,6 +1,7 @@
 package catalog
 
 import (
+	langpkg "brunexgeek/alfred/internal/language"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -10,14 +11,6 @@ import (
 	"slices"
 	"strings"
 	"time"
-)
-
-type LanguageCode string
-
-const (
-	PT LanguageCode = "pt"
-	ES LanguageCode = "es"
-	EN LanguageCode = "en"
 )
 
 type FormatCode string
@@ -49,43 +42,43 @@ type Catalog struct {
 }
 
 type ProductEntry struct {
-	Id        string                          `json:"id"` // unique product name (lowercase)
-	Tainted   bool                            `json:"-"`
-	Path      string                          `json:"-"`
-	Url       string                          `json:"-"`
-	Languages map[LanguageCode]*LanguageEntry `json:"languages"` // indexed by language code
+	Id        string                                  `json:"product"` // unique product name (lowercase)
+	Tainted   bool                                    `json:"-"`
+	Path      string                                  `json:"-"`
+	Url       string                                  `json:"url"`
+	Languages map[langpkg.LanguageCode]*LanguageEntry `json:"languages"` // indexed by language code
 }
 
 type LanguageEntry struct {
-	Language LanguageCode             `json:"-"`
+	Language langpkg.LanguageCode     `json:"language"`
 	Tainted  bool                     `json:"-"`
 	Path     string                   `json:"-"`
-	Url      string                   `json:"-"`
+	Url      string                   `json:"url"`
 	Latest   Version                  `json:"latest"`
 	Versions map[string]*VersionEntry `json:"versions"` // indexed by semantic version
 }
 
 type VersionEntry struct {
-	Version Version                     `json:"-"`
+	Version Version                     `json:"version"`
 	Tainted bool                        `json:"-"`
 	Path    string                      `json:"-"`
-	Url     string                      `json:"-"`
+	Url     string                      `json:"url"`
 	Formats map[FormatCode]*FormatEntry `json:"formats"` // indexed by format code
 }
 
 type FormatEntry struct {
-	Format  FormatCode `json:"-"`
+	Format  FormatCode `json:"format"`
 	Path    string     `json:"-"`
-	Url     string     `json:"-"`
+	Url     string     `json:"url"`
 	RelPath string     `json:"path"`
 }
 
 type Publication struct {
-	Product  string       `json:"prod"` // unique product name (lowercase)
-	Version  Version      `json:"ver"`  // complete semantic version
-	Format   FormatCode   `json:"fmt"`
-	Language LanguageCode `json:"lang"`
-	Date     time.Time    `json:"date"`
+	Product  string               `json:"prod"` // unique product name (lowercase)
+	Version  Version              `json:"ver"`  // complete semantic version
+	Format   FormatCode           `json:"fmt"`
+	Language langpkg.LanguageCode `json:"lang"`
+	Date     time.Time            `json:"date"`
 }
 
 func NewCatalog(env *Environment) *Catalog {
@@ -102,21 +95,19 @@ func (p Publication) Validate() error {
 	if !p.Format.IsValid() {
 		return fmt.Errorf("unsupported format")
 	}
+	if !p.Version.HasVersion() {
+		return fmt.Errorf("missing version number")
+	}
 	return nil
 }
 
 const RE_PRODUCT_NAME = "([a-z][a-z0-9_]{0,31})"
 const RE_FORMAT = "(" + HTML + "|" + PDF + "|" + TGZ + ")"
-const RE_LANGUAGE = "(" + PT + "|" + ES + "|" + EN + ")"
 
 var name_re, _ = regexp.Compile("^" + RE_PRODUCT_NAME + "$")
 
 func (v FormatCode) IsValid() bool {
 	return v == HTML || v == PDF || v == TGZ
-}
-
-func (v LanguageCode) IsValid() bool {
-	return v == PT || v == ES || v == EN
 }
 
 func (c *Catalog) Serialize() ([]byte, error) {
@@ -131,7 +122,11 @@ func (p *Publication) DataPath() string {
 	return "/" + path.Join(p.Product, string(p.Language), p.Version.ToString(), string(p.Format))
 }
 
-func (c *Catalog) AddPublication(pub *Publication) {
+func (c *Catalog) AddPublication(pub *Publication) error {
+	err := pub.Validate()
+	if err != nil {
+		return err
+	}
 	ok := false
 	var product *ProductEntry
 	var language *LanguageEntry
@@ -140,7 +135,7 @@ func (c *Catalog) AddPublication(pub *Publication) {
 	root := path.Join(c.Environment.Path, pub.Product)
 	url := strings.Join([]string{".", pub.Product}, "/")
 	if product, ok = c.Products[pub.Product]; !ok {
-		product = &ProductEntry{pub.Product, true, root, url, make(map[LanguageCode]*LanguageEntry, 0)}
+		product = &ProductEntry{pub.Product, true, root, url, make(map[langpkg.LanguageCode]*LanguageEntry, 0)}
 		c.Products[pub.Product] = product
 		c.Tainted = true
 	}
@@ -172,6 +167,8 @@ func (c *Catalog) AddPublication(pub *Publication) {
 		version.Formats[pub.Format] = format
 		version.Tainted = true
 	}
+
+	return nil
 }
 
 func read_directory(root string) []os.DirEntry {
@@ -193,7 +190,7 @@ func (c *Catalog) ScanEnvironment(root string) {
 		// for each language
 		root := path.Join(root, product)
 		for _, entry := range read_directory(root) {
-			language := LanguageCode(entry.Name())
+			language := langpkg.LanguageCode(entry.Name())
 			if !entry.IsDir() || !language.IsValid() {
 				continue
 			}
@@ -349,7 +346,13 @@ func (c *Catalog) UpdateWebIndices() error {
 
 	c.Tainted = false
 	for _, product := range c.Products {
-		product.Tainted = false
+		if product.Tainted {
+			err := generateMetadata(product, c.Environment.Path)
+			if err != nil {
+				return err
+			}
+			product.Tainted = false
+		}
 		for _, language := range product.Languages {
 			language.Tainted = false
 			for _, version := range language.Versions {
@@ -387,8 +390,9 @@ type Context struct {
 	Strings  StringMap
 }
 
-func writePage(fpath string, tpath string, context *Context) error {
-	output, err := os.OpenFile(fpath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
+func generateIndexPage(context *Context, basePath string, tpath string) error {
+	fpath := path.Join(basePath, "index.html")
+	output, err := os.OpenFile(fpath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
 		fmt.Print(err.Error())
 		return err
@@ -533,9 +537,23 @@ func createFormatIndex(c *Catalog, v *VersionEntry) ([]*MenuItem, error) {
 	return output, nil
 }
 
-func generateIndexPage(context *Context, basePath string, template string) error {
-	filename := path.Join(basePath, "index.html")
-	return writePage(filename, template, context)
+func generateMetadata(product *ProductEntry, basePath string) error {
+	data, err := json.Marshal(product)
+
+	fpath := path.Join(basePath, product.Id, "metadata.json")
+	fmt.Printf("Writing metadata to '%s'\n", fpath)
+	file, err := os.OpenFile(fpath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	_, err = file.Write(data)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (e *Environment) Translate(expr string) string {

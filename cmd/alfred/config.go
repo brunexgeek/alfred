@@ -1,14 +1,14 @@
 package main
 
 import (
+	"brunexgeek/alfred/internal/catalog"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path"
 	"path/filepath"
 
-	"cpqd.com.br/alfred/internal/catalog"
-	"cpqd.com.br/alfred/internal/extra"
+	"brunexgeek/alfred/internal/extra"
 )
 
 type Config struct {
