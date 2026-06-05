@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Alfred - Publicação de documentos</title>
+    <title>Alfred - Document publishing</title>
     <link
       href="./bootstrap.min.css"
       rel="stylesheet"
@@ -20,87 +20,259 @@
           id="pubform"
         >
           <div class="mb-3">
-            <label for="input_env" class="form-label">Ambiente</label>
+            <label for="input_env" class="form-label">Environment</label>
             <select
               id="input_env"
               class="form-select"
-              aria-label="Ambiente"
+              aria-label="Environment"
               aria-describedby="help_env"
               required
             >
               <option selected></option>
             </select>
             <div id="help_env" class="form-text">
-              Ambiente onde a documentação será publicada. Antes de publicar em
-              ambientes de produção, certifique-se de que a documentação está
-              pronta para consumo pelos clientes do CPQD.
+              Environment where the documentation will be published. Before publishing to production environments, ensure that the documentation is ready.
             </div>
           </div>
           <div class="mb-3">
-            <label for="input_product" class="form-label">Produto</label>
+            <label for="input_product" class="form-label">Product</label>
             <input
               type="input"
               class="form-control"
               id="input_product"
-              aria-label="Produto"
+              aria-label="Product"
               aria-describedby="help_product"
               required
               pattern="^[a-z][a-z0-9_]{0,31}$"
             />
             <div class="invalid-feedback">
-              Deve iniciar com letra e os demais caracteres podem ser letras,
-              números e sublinhas.
+              It must start with a letter, and the remaining characters can be letters, numbers, and underscores.
             </div>
             <div id="help_product" class="form-text">
-              Este é nome do produto que aparecerá na URL publicada. São aceitos
-              letras (não acentuadas e minúsculas), números e sublinhas. O
-              tamanho máximo do nome do produto é 32 caracteres. Qualquer nome
-              informado será aceito, permitindo criar novos produtos facilmente.
+              This is the product name that will appear in the published URL. Letters (unaccented and lowercase), numbers, and underscores are accepted. The maximum product name length is 32 characters. Any name provided will be accepted, allowing you to easily create new products.
             </div>
           </div>
           <div class="mb-3">
-            <label for="input_version" class="form-label">Versão</label>
+            <label for="input_version" class="form-label">Version</label>
             <input
               type="input"
               class="form-control"
               id="input_version"
-              adria-lavel="Versão"
+              aria-lavel="Version"
               aria-describedby="help_version"
               placeholder="x.x.x"
               required
-              pattern="^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$"
+              pattern="^[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,4}(-[A-Za-z][A-Za-z0-9_-]*)$"
             />
             <div class="invalid-feedback">
-              A versão deve ser três valores numéricos separados por pontos.
+              Invalid semantic version or tag.
             </div>
             <div id="help_version" class="form-text">
-              A versão deve estar no formato especificado por
-              <a href="https://semver.org/">semantic versioning</a>, ou seja,
-              deve ser composta por três valores numéricos separados por pontos.
+              <a href="https://semver.org/">Semantic version</a> of the product and optional tag. The tag is placed after the version, preceded by a dash.A versão deve estar no formato especificado por
             </div>
           </div>
           <div class="mb-3">
-            <label for="input_lang" class="form-label">Idioma</label>
+            <label for="input_lang" class="form-label">Language</label>
             <select
               id="input_lang"
               class="form-select"
-              aria-label="Idioma"
+              aria-label="Language"
               aria-describedby="help_lang"
               required
             >
               <option selected></option>
-              <option value="pt">Português</option>
-              <option value="en">Inglês</option>
-              <option value="es">Espanhol</option>
+              <option value="aa"> AA - Afar</option>
+              <option value="ab"> AB - Abkhazian</option>
+              <option value="ae"> AE - Avestan</option>
+              <option value="af"> AF - Afrikaans</option>
+              <option value="ak"> AK - Akan</option>
+              <option value="am"> AM - Amharic</option>
+              <option value="an"> AN - Aragonese</option>
+              <option value="ar"> AR - Arabic</option>
+              <option value="as"> AS - Assamese</option>
+              <option value="av"> AV - Avaric</option>
+              <option value="ay"> AY - Aymara</option>
+              <option value="az"> AZ - Azerbaijani</option>
+              <option value="ba"> BA - Bashkir</option>
+              <option value="be"> BE - Belarusian</option>
+              <option value="bg"> BG - Bulgarian</option>
+              <option value="bi"> BI - Bislama</option>
+              <option value="bm"> BM - Bambara</option>
+              <option value="bn"> BN - Bengali</option>
+              <option value="bo"> BO - Tibetan</option>
+              <option value="br"> BR - Breton</option>
+              <option value="bs"> BS - Bosnian</option>
+              <option value="ca"> CA - Catalan</option>
+              <option value="ce"> CE - Chechen</option>
+              <option value="ch"> CH - Chamorro</option>
+              <option value="co"> CO - Corsican</option>
+              <option value="cr"> CR - Cree</option>
+              <option value="cs"> CS - Czech</option>
+              <option value="cu"> CU - Church Slavic</option>
+              <option value="cv"> CV - Chuvash</option>
+              <option value="cy"> CY - Welsh</option>
+              <option value="da"> DA - Danish</option>
+              <option value="de"> DE - German</option>
+              <option value="dv"> DV - Divehi</option>
+              <option value="dz"> DZ - Dzongkha</option>
+              <option value="ee"> EE - Ewe</option>
+              <option value="el"> EL - Modern Greek</option>
+              <option value="en"> EN - English</option>
+              <option value="eo"> EO - Esperanto</option>
+              <option value="es"> ES - Spanish</option>
+              <option value="et"> ET - Estonian</option>
+              <option value="eu"> EU - Basque</option>
+              <option value="fa"> FA - Persian</option>
+              <option value="ff"> FF - Fulah</option>
+              <option value="fi"> FI - Finnish</option>
+              <option value="fj"> FJ - Fijian</option>
+              <option value="fo"> FO - Faroese</option>
+              <option value="fr"> FR - French</option>
+              <option value="fy"> FY - Western Frisian</option>
+              <option value="ga"> GA - Irish</option>
+              <option value="gd"> GD - Gaelic</option>
+              <option value="gl"> GL - Galician</option>
+              <option value="gn"> GN - Guarani</option>
+              <option value="gu"> GU - Gujarati</option>
+              <option value="gv"> GV - Manx</option>
+              <option value="ha"> HA - Hausa</option>
+              <option value="he"> HE - Hebrew</option>
+              <option value="hi"> HI - Hindi</option>
+              <option value="ho"> HO - Hiri Motu</option>
+              <option value="hr"> HR - Croatian</option>
+              <option value="ht"> HT - Haitian</option>
+              <option value="hu"> HU - Hungarian</option>
+              <option value="hy"> HY - Armenian</option>
+              <option value="hz"> HZ - Herero</option>
+              <option value="ia"> IA - Interlingua</option>
+              <option value="id"> ID - Indonesian</option>
+              <option value="ie"> IE - Interlingue</option>
+              <option value="ig"> IG - Igbo</option>
+              <option value="ii"> II - Sichuan Yi</option>
+              <option value="ik"> IK - Inupiaq</option>
+              <option value="io"> IO - Ido</option>
+              <option value="is"> IS - Icelandic</option>
+              <option value="it"> IT - Italian</option>
+              <option value="iu"> IU - Inuktitut</option>
+              <option value="ja"> JA - Japanese</option>
+              <option value="jv"> JV - Javanese</option>
+              <option value="ka"> KA - Georgian</option>
+              <option value="kg"> KG - Kongo</option>
+              <option value="ki"> KI - Kikuyu</option>
+              <option value="kj"> KJ - Kuanyama</option>
+              <option value="kk"> KK - Kazakh</option>
+              <option value="kl"> KL - Kalaallisut</option>
+              <option value="km"> KM - Central Khmer</option>
+              <option value="kn"> KN - Kannada</option>
+              <option value="ko"> KO - Korean</option>
+              <option value="kr"> KR - Kanuri</option>
+              <option value="ks"> KS - Kashmiri</option>
+              <option value="ku"> KU - Kurdish</option>
+              <option value="kv"> KV - Komi</option>
+              <option value="kw"> KW - Cornish</option>
+              <option value="ky"> KY - Kirghiz</option>
+              <option value="la"> LA - Latin</option>
+              <option value="lb"> LB - Luxembourgish</option>
+              <option value="lg"> LG - Ganda</option>
+              <option value="li"> LI - Limburgan</option>
+              <option value="ln"> LN - Lingala</option>
+              <option value="lo"> LO - Lao</option>
+              <option value="lt"> LT - Lithuanian</option>
+              <option value="lu"> LU - Luba-Katanga</option>
+              <option value="lv"> LV - Latvian</option>
+              <option value="mg"> MG - Malagasy</option>
+              <option value="mh"> MH - Marshallese</option>
+              <option value="mi"> MI - Maori</option>
+              <option value="mk"> MK - Macedonian</option>
+              <option value="ml"> ML - Malayalam</option>
+              <option value="mn"> MN - Mongolian</option>
+              <option value="mr"> MR - Marathi</option>
+              <option value="ms"> MS - Malay</option>
+              <option value="mt"> MT - Maltese</option>
+              <option value="my"> MY - Burmese</option>
+              <option value="na"> NA - Nauru</option>
+              <option value="nb"> NB - Norwegian Bokmål</option>
+              <option value="nd"> ND - North Ndebele</option>
+              <option value="ne"> NE - Nepali</option>
+              <option value="ng"> NG - Ndonga</option>
+              <option value="nl"> NL - Dutch</option>
+              <option value="nn"> NN - Norwegian Nynorsk</option>
+              <option value="no"> NO - Norwegian</option>
+              <option value="nr"> NR - South Ndebele</option>
+              <option value="nv"> NV - Navajo</option>
+              <option value="ny"> NY - Chichewa</option>
+              <option value="oc"> OC - Occitan</option>
+              <option value="oj"> OJ - Ojibwa</option>
+              <option value="om"> OM - Oromo</option>
+              <option value="or"> OR - Oriya</option>
+              <option value="os"> OS - Ossetian</option>
+              <option value="pa"> PA - Panjabi</option>
+              <option value="pi"> PI - Pali</option>
+              <option value="pl"> PL - Polish</option>
+              <option value="ps"> PS - Pushto</option>
+              <option value="pt"> PT - Portuguese</option>
+              <option value="qu"> QU - Quechua</option>
+              <option value="rm"> RM - Romansh</option>
+              <option value="rn"> RN - Rundi</option>
+              <option value="ro"> RO - Romanian</option>
+              <option value="ru"> RU - Russian</option>
+              <option value="rw"> RW - Kinyarwanda</option>
+              <option value="sa"> SA - Sanskrit</option>
+              <option value="sc"> SC - Sardinian</option>
+              <option value="sd"> SD - Sindhi</option>
+              <option value="se"> SE - Northern Sami</option>
+              <option value="sg"> SG - Sango</option>
+              <option value="si"> SI - Sinhala</option>
+              <option value="sk"> SK - Slovak</option>
+              <option value="sl"> SL - Slovenian</option>
+              <option value="sm"> SM - Samoan</option>
+              <option value="sn"> SN - Shona</option>
+              <option value="so"> SO - Somali</option>
+              <option value="sq"> SQ - Albanian</option>
+              <option value="sr"> SR - Serbian</option>
+              <option value="ss"> SS - Swati</option>
+              <option value="st"> ST - Sotho Southern</option>
+              <option value="su"> SU - Sundanese</option>
+              <option value="sv"> SV - Swedish</option>
+              <option value="sw"> SW - Swahili</option>
+              <option value="ta"> TA - Tamil</option>
+              <option value="te"> TE - Telugu</option>
+              <option value="tg"> TG - Tajik</option>
+              <option value="th"> TH - Thai</option>
+              <option value="ti"> TI - Tigrinya</option>
+              <option value="tk"> TK - Turkmen</option>
+              <option value="tl"> TL - Tagalog</option>
+              <option value="tn"> TN - Tswana</option>
+              <option value="to"> TO - Tonga</option>
+              <option value="tr"> TR - Turkish</option>
+              <option value="ts"> TS - Tsonga</option>
+              <option value="tt"> TT - Tatar</option>
+              <option value="tw"> TW - Twi</option>
+              <option value="ty"> TY - Tahitian</option>
+              <option value="ug"> UG - Uighur</option>
+              <option value="uk"> UK - Ukrainian</option>
+              <option value="ur"> UR - Urdu</option>
+              <option value="uz"> UZ - Uzbek</option>
+              <option value="ve"> VE - Venda</option>
+              <option value="vi"> VI - Vietnamese</option>
+              <option value="vo"> VO - Volapük</option>
+              <option value="wa"> WA - Walloon</option>
+              <option value="wo"> WO - Wolof</option>
+              <option value="xh"> XH - Xhosa</option>
+              <option value="yi"> YI - Yiddish</option>
+              <option value="yo"> YO - Yoruba</option>
+              <option value="za"> ZA - Zhuang</option>
+              <option value="zh"> ZH - Chinese</option>
+              <option value="zu"> ZU - Zulu</option>
             </select>
-            <div id="help_lang" class="form-text">Idioma da documentação.</div>
+            <div id="help_lang" class="form-text">Documentation language.</div>
           </div>
           <div class="mb-3">
-            <label for="input_format" class="form-label">Formato</label>
+            <label for="input_format" class="form-label">Format</label>
             <select
               id="input_format"
               class="form-select"
-              aria-label="Formato"
+              aria-label="Format"
               aria-describedby="help_format"
               required
             >
@@ -109,17 +281,11 @@
               <option value="tgz">TGZ</option>
             </select>
             <div id="help_format" class="form-text">
-              Formato da documentação que será publicada. Os formatos
-              <b>HTML</b> e <b>TGZ</b> requerem que o anexo seja um arquivo
-              <i>tar.gz</i> (pacote TAR comprimido com GZIP). Em <b>HTML</b>, o
-              conteúdo do arquivo será extraído e servido como conteúdo web
-              estático. Já em <b>TGZ</b>, o arquivo em si será servido,
-              permitindo que usuários baixem-no e tenham uma cópia de toda a
-              documentação localmente.
+              Documentation format to be published. The <b>HTML</b> and <b>TGZ</b> formats require the attachment to be a <i>tar.gz</i> file (a TAR archive compressed with GZIP). For <b>HTML</b>, the contents of the archive will be extracted and served as static web content. For <b>TGZ</b>, the archive itself will be served, allowing users to download it and keep a local copy of the complete documentation.
             </div>
           </div>
           <div class="mb-3">
-            <label for="input_attachment" class="form-label">Anexo</label>
+            <label for="input_attachment" class="form-label">Attachment</label>
             <input
               type="file"
               class="form-control"
@@ -127,26 +293,8 @@
               required
             />
             <div id="help_lang" class="form-text">
-              Arquivo ou pacote que será publicado. O tipo de arquivo depende do
-              formato indicado no campo anterior. O tamanho máximo do anexo é de
-              10 MiB. Caso o anexo seja um arquivo <i>tar.gz</i>, o tamanho
-              máximo de seu conteúdo expandido é de 15 MiB.
-            </div>
-          </div>
-          <div class="mb-3">
-            <label for="input_email" class="form-label">E-Mail</label>
-            <input
-              type="input"
-              class="form-control"
-              id="input_email"
-              required
-              pattern="^[a-zA-Z0-9]+@cpqd.com.br$"
-            />
-            <div class="invalid-feedback">Digite um e-mail válido.</div>
-            <div id="help_email" class="form-text">
-              Seu endereço de e-mail corporativo. Esta informação é utilizada
-              para registrar o autor da publicação e não aparecerá na
-              documentação publicada.
+              File or package to be published. The required file type depends on the format selected in the previous field.
+              The maximum attachment size is 10 MiB. If the attachment is a <i>tar.gz</i> file, the maximum size of its extracted contents is 50 MiB.
             </div>
           </div>
 
@@ -157,23 +305,16 @@
                 onclick="clear_form()"
                 class="btn btn-danger"
               >
-                Limpar
+                Reset
               </button>
             </div>
             <div class="col" style="text-align: right">
-              <button type="submit" class="btn btn-primary">Publicar</button>
+              <button type="submit" class="btn btn-primary">Publish</button>
             </div>
           </div>
         </form>
       </div>
     </div>
-
-    <!--script
-      src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"
-      integrity="sha384-w76AqPfDkMBDXo30jS1Sgez6pr3x5MlQ1ZAGC+nuZB+EYdgRZgiwxhTBTkF7CXvN"
-      crossorigin="anonymous"
-    ></script-->
-
     <script>
       // Example starter JavaScript for disabling form submissions if there are invalid fields
       (() => {
@@ -197,7 +338,6 @@
                   ver: document.getElementById("input_version").value,
                   fmt: document.getElementById("input_format").value,
                   lang: document.getElementById("input_lang").value,
-                  email: document.getElementById("input_email").value,
                 };
 
                 let file = document.getElementById("input_attachment").files[0];
@@ -218,7 +358,7 @@
                     return r.json();
                   })
                   .then((data) => {
-                    alert("Documentação publicada com sucesso!");
+                    alert("Documentation successfully published!");
                     clear_form(false);
                   }).catch((err) => {
                     err.json().then((body) => {
@@ -236,7 +376,7 @@
       })();
 
       function clear_form(ask = true) {
-        if (ask && !confirm("Apagar todos os dados preechidos no formulário?"))
+        if (ask && !confirm("Delete all the data entered in the form?"))
           return;
         let form = document.getElementById("pubform");
         form.reset();
