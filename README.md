@@ -84,11 +84,7 @@ docker run --rm -v ~/docs/env1:/docs/env -v ~/config.json:/opt/config.json brune
 
 ## Publishing content
 
-To publish documentations use the following endpoint, served int the host and port specified in the `manager` entry of the configuration file.
-
-`POST /v1/publish`
-
-The endpoint uploads metadata and a file attachment to Alfred, and  expects a `multipart/form-data` request with two fields:
+It's possible to publish content through the built-in web page `http://<host>:<port>/`, where host and port are the values specified in the `manager` entry in the configuration file. This address also serves the REST endpoint `http://<host>:<port>/v1/publish`. The endpoint uploads metadata and a file attachment to Alfred, and expects a `multipart/form-data` request with two fields:
 
 * **params**: JSON object containing metadata of the content being published:
 
