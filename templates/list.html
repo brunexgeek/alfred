@@ -2,29 +2,36 @@
 <html>
 <head>
     <meta charset="utf-8">
-    <title>{{.Title}}</title>
+    <title>{{ index .Strings .Item.ChildrenType }}</title>
+    <style>
+        body {
+            font-family: Arial, Helvetica, sans-serif;
+        }
+        a {
+            margin-bottom: .5em;
+        }
+        .item-language {
+            text-transform: uppercase;
+        }
+    </style>
 </head>
 <body>
-    <h1>{{.Title}}</h1>
+    <h1>{{ index .Strings .Item.ChildrenType }}</h1>
     <ul>
-        <!-- Products -->
-        {{ range .Menu }}
+        {{ range $index, $first := .Item.Children }}
             <li>
-                <a href='{{.Url}}'>{{.Title}}</a>
+                <a href='{{ $first.Name }}' class="item-{{ $first.Type }}">{{ $first.TranslatedName }}</a>
                 <ul>
-                    <!-- Languages -->
-                    {{ range .Children }}
+                    {{ range $index, $second := $first.Children }}
                         <li>
-                            <a href='{{.Url}}'>{{.Title}}</a>
+                            <a href='{{ $first.Name }}/{{ $second.Name }}' class="item-{{ $second.Type }}">{{ $second.TranslatedName }}</a>
                             <ul>
-                                <!-- Versions -->
-                                {{ range .Children }}
+                                {{ range $index, $third := $second.Children }}
                                     <li>
-                                        <a href='{{.Url}}'>{{.Title}}</a>
+                                        <a href='{{ $first.Name }}/{{ $second.Name }}/{{ $third.Name }}' class="item-{{ $third.Type }}">{{ $third.TranslatedName }}</a>
                                         <ul>
-                                            <!-- Formats -->
-                                            {{ range .Children }}
-                                                <li><a href='{{.Url}}'>{{.Title}}</a></li>
+                                            {{ range $index, $forth := $third.Children }}
+                                                <li><a href='{{ $first.Name }}/{{ $second.Name }}/{{ $third.Name }}/{{ $forth.Name }}' class="item-{{ $forth.Type }}">{{ $forth.TranslatedName }}</a></li>
                                             {{ end }}
                                         </ul>
                                     </li>

@@ -350,40 +350,69 @@ func (v *VersionEntry) Iterate(it func(Iterator)) {
 }
 
 func (c *Catalog) UpdateWebIndices() error {
+	var root *MenuItem
 	if c.Tainted {
-		err := generateProductIndex(c)
+		toc, err := createCatalogIndex(c)
 		if err != nil {
 			return err
 		}
-		c.Tainted = false
+		root = &MenuItem{
+			Name:           "catalog",
+			TranslatedName: c.Environment.Translate("catalog"),
+			Children:       toc,
+			ChildrenType:   "product",
+			Type:           "catalog",
+		}
 	}
 
-	for _, product := range c.Products {
-		if product.Tainted {
-			err := generateLanguageIndex(c, product)
-			if err != nil {
-				return err
-			}
-			product.Tainted = false
+	if root != nil {
+		//title := c.Environment.Translate("Products")
+		err := generateIndexPage(c, root, c.Environment.Path, c.Environment.Templates.Products)
+		if err != nil {
+			return err
 		}
 
-		for _, language := range product.Languages {
-			if language.Tainted {
-				err := generateVersionIndex(c, language)
+		for _, product := range root.Children {
+			productPath := c.Environment.Path + "/" + product.Name
+			if product.Tainted {
+				//title := c.Environment.Translate("Languages")
+				err := generateIndexPage(c, product, productPath, c.Environment.Templates.Languages)
 				if err != nil {
 					return err
 				}
-				language.Tainted = false
 			}
 
-			for _, version := range language.Versions {
-				if version.Tainted {
-					err := generateFormatIndex(c, version)
+			for _, language := range product.Children {
+				languagePath := productPath + "/" + language.Name
+				if language.Tainted {
+					//title := c.Environment.Translate("Versions")
+					err := generateIndexPage(c, language, languagePath, c.Environment.Templates.Versions)
 					if err != nil {
 						return err
 					}
-					version.Tainted = false
 				}
+
+				for _, version := range language.Children {
+					if version.Tainted {
+						versionPath := languagePath + "/" + version.Name
+						//title := c.Environment.Translate("Formats")
+						err := generateIndexPage(c, version, versionPath, c.Environment.Templates.Formats)
+						if err != nil {
+							return err
+						}
+					}
+				}
+			}
+		}
+	}
+
+	c.Tainted = false
+	for _, product := range c.Products {
+		product.Tainted = false
+		for _, language := range product.Languages {
+			language.Tainted = false
+			for _, version := range language.Versions {
+				version.Tainted = false
 			}
 		}
 	}
@@ -392,14 +421,17 @@ func (c *Catalog) UpdateWebIndices() error {
 }
 
 type MenuItem struct {
-	Title    string
-	Url      string
-	Children []*MenuItem
+	TranslatedName string
+	Name           string
+	Children       []*MenuItem
+	ChildrenType   string
+	Tainted        bool
+	Type           string
 }
 
 type Context struct {
-	Menu  []*MenuItem
-	Title string
+	Item    *MenuItem
+	Strings *map[string]string
 }
 
 func writePage(fpath string, tpath string, context *Context) error {
@@ -410,26 +442,29 @@ func writePage(fpath string, tpath string, context *Context) error {
 	}
 	defer output.Close()
 
-	fmt.Printf("Updating index at '%s'\n", fpath)
-
-	if len(fpath) > 0 {
+	if len(tpath) > 0 {
 		t, err := template.ParseFiles(tpath)
 		if err == nil {
+			fmt.Printf("Updating index at '%s' with template '%s'\n", fpath, tpath)
 			err = t.Execute(output, context)
-			if err == nil {
-				return err
+			if err != nil {
+				fmt.Println(err)
 			}
-			return nil
+			return err
 		}
+		fmt.Println(err)
 	}
+
+	fmt.Printf("Updating index at '%s'\n", fpath)
 
 	// fallback to a simple HTML page
 	const PAGE_HEADER = `<!DOCTYPE html><html><head><title>%s</title><meta charset="utf-8"></head><body><h1>%s</h1><ul>`
-	output.WriteString(fmt.Sprintf(PAGE_HEADER, context.Title, context.Title))
+	title := (*context.Strings)[context.Item.ChildrenType]
+	output.WriteString(fmt.Sprintf(PAGE_HEADER, title, title))
 
-	for _, item := range context.Menu {
+	for _, item := range context.Item.Children {
 		const PAGE_ITEM = "<li><a href='%s'>%s</a></li>"
-		output.WriteString(fmt.Sprintf(PAGE_ITEM, item.Url, item.Title))
+		output.WriteString(fmt.Sprintf(PAGE_ITEM, item.Name, item.TranslatedName))
 	}
 
 	const PAGE_FOOTER = `</ul></body></html>`
@@ -438,123 +473,92 @@ func writePage(fpath string, tpath string, context *Context) error {
 	return nil
 }
 
-func createProductMenu(c *Catalog) ([]*MenuItem, error) {
+func createCatalogIndex(c *Catalog) ([]*MenuItem, error) {
 	menu := make([]*MenuItem, 0)
 	for _, product := range c.Products {
 
-		children, err := createLanguageMenu(c, product)
+		children, err := createLanguageIndex(c, product)
 		if err != nil {
 			return nil, err
 		}
 
 		item := &MenuItem{
-			Title:    c.Environment.Translate(product.Id),
-			Url:      product.Id,
-			Children: children,
+			TranslatedName: c.Environment.Translate(product.Id),
+			Name:           product.Id,
+			Children:       children,
+			ChildrenType:   "language",
+			Tainted:        product.Tainted,
+			Type:           "product",
 		}
 		menu = append(menu, item)
 	}
 	return menu, nil
 }
 
-func createLanguageMenu(c *Catalog, p *ProductEntry) ([]*MenuItem, error) {
+func createLanguageIndex(c *Catalog, p *ProductEntry) ([]*MenuItem, error) {
 	menu := make([]*MenuItem, 0)
 	for _, language := range p.Languages {
 
-		children, err := createVersionMenu(c, language)
+		children, err := createVersionIndex(c, language)
 		if err != nil {
 			return nil, err
 		}
 
 		item := &MenuItem{
-			Title:    c.Environment.Translate(string(language.Language)),
-			Url:      string(language.Language),
-			Children: children,
+			TranslatedName: c.Environment.Translate(string(language.Language)),
+			Name:           string(language.Language),
+			Children:       children,
+			ChildrenType:   "version",
+			Tainted:        language.Tainted,
+			Type:           "language",
 		}
 		menu = append(menu, item)
 	}
 	return menu, nil
 }
 
-func createVersionMenu(c *Catalog, l *LanguageEntry) ([]*MenuItem, error) {
+func createVersionIndex(c *Catalog, l *LanguageEntry) ([]*MenuItem, error) {
 	menu := make([]*MenuItem, 0)
 	for _, version := range l.Versions {
 
-		children, err := createFormatMenu(c, version)
+		children, err := createFormatIndex(c, version)
 		if err != nil {
 			return nil, err
 		}
 
 		item := &MenuItem{
-			Title:    c.Environment.Translate(version.Version.ToString()),
-			Url:      version.Version.ToString(),
-			Children: children,
+			TranslatedName: c.Environment.Translate(version.Version.ToString()),
+			Name:           version.Version.ToString(),
+			Children:       children,
+			ChildrenType:   "format",
+			Tainted:        version.Tainted,
+			Type:           "version",
 		}
 		menu = append(menu, item)
 	}
 	return menu, nil
 }
 
-func createFormatMenu(c *Catalog, v *VersionEntry) ([]*MenuItem, error) {
+func createFormatIndex(c *Catalog, v *VersionEntry) ([]*MenuItem, error) {
 	menu := make([]*MenuItem, 0)
 	for _, format := range v.Formats {
 		item := &MenuItem{
-			Title: c.Environment.Translate(string(format.Format)),
-			Url:   string(format.Format),
+			TranslatedName: c.Environment.Translate(string(format.Format)),
+			Name:           string(format.Format),
+			Type:           "format",
 		}
 		menu = append(menu, item)
 	}
 	return menu, nil
 }
 
-func generateProductIndex(c *Catalog) error {
-	menu, err := createProductMenu(c)
-	if err != nil {
-		return err
-	}
-	title := c.Environment.Translate("Products")
-	context := &Context{Title: title, Menu: menu}
-	filename := path.Join(c.Environment.Path, "index.html")
-	return writePage(filename, c.Environment.Templates.Products, context)
-}
-
-func generateLanguageIndex(c *Catalog, p *ProductEntry) error {
-	menu, err := createLanguageMenu(c, p)
-	if err != nil {
-		return err
-	}
+func generateIndexPage(c *Catalog, root *MenuItem, basePath string, template string) error {
 	context := &Context{
-		Title: c.Environment.Translate("Languages"),
-		Menu:  menu,
+		Item:    root,
+		Strings: &c.Environment.Strings,
 	}
-	filename := path.Join(p.Path, "index.html")
-	return writePage(filename, c.Environment.Templates.Languages, context)
-}
-
-func generateVersionIndex(c *Catalog, l *LanguageEntry) error {
-	menu, err := createVersionMenu(c, l)
-	if err != nil {
-		return err
-	}
-	context := &Context{
-		Title: c.Environment.Translate("Versions"),
-		Menu:  menu,
-	}
-	filename := path.Join(l.Path, "index.html")
-	return writePage(filename, c.Environment.Templates.Versions, context)
-}
-
-func generateFormatIndex(c *Catalog, v *VersionEntry) error {
-	menu, err := createFormatMenu(c, v)
-	if err != nil {
-		return err
-	}
-	context := &Context{
-		Title: c.Environment.Translate("Formats"),
-		Menu:  menu,
-	}
-	filename := path.Join(v.Path, "index.html")
-	return writePage(filename, c.Environment.Templates.Formats, context)
+	filename := path.Join(basePath, "index.html")
+	return writePage(filename, template, context)
 }
 
 func (e *Environment) Translate(expr string) string {

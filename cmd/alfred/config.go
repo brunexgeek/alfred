@@ -90,6 +90,9 @@ func validate_and_return(cpath string, config *Config) (*Config, error) {
 	}
 
 	for i, env := range config.Environments {
+		if env.Strings == nil {
+			env.Strings = make(map[string]string)
+		}
 		if len(env.Name) == 0 {
 			return nil, fmt.Errorf("missing name for environment #%d", i)
 		}
@@ -120,6 +123,20 @@ func validate_and_return(cpath string, config *Config) (*Config, error) {
 		env.Templates.Formats, err = make_absolute(env.Templates.Formats, root)
 		if err != nil {
 			return nil, err
+		}
+
+		// make sure we have translations for item types
+		names := map[string]string{
+			"catalog":  "Catalog",
+			"product":  "Product",
+			"language": "Language",
+			"version":  "Version",
+			"format":   "Format",
+		}
+		for key, value := range names {
+			if _, ok := env.Strings[key]; !ok {
+				env.Strings[key] = value
+			}
 		}
 	}
 
