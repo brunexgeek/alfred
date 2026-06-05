@@ -15,7 +15,6 @@ import (
 	"os/signal"
 	"path"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -66,16 +65,6 @@ func send_error(status int, message string, w http.ResponseWriter) {
 	}
 	w.Header().Set("Server", server_version)
 	http.Error(w, string(data), status)
-}
-
-func extract_context(path string, endpoint string) string {
-	if !strings.HasSuffix(endpoint, "/") {
-		endpoint = endpoint + "/"
-	}
-	if !strings.HasPrefix(path, endpoint) {
-		return ""
-	}
-	return path[len(endpoint):]
 }
 
 type Part struct {
@@ -268,7 +257,6 @@ var environments = make(map[string]*catalog.Catalog)
 
 func main() {
 	install_signal_hook()
-	initialize_globals()
 
 	fmt.Printf("Alfred %s\n", ALFRED_VERSION)
 
@@ -321,74 +309,4 @@ func main() {
 	select {
 	case <-server_done:
 	}
-}
-
-func http_error(code int, msg string, w http.ResponseWriter) {
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.WriteHeader(code)
-	fmt.Fprintln(w, msg)
-}
-
-type GlobalValues struct {
-	block_regex *regexp.Regexp
-	product_url *regexp.Regexp
-	format_url  *regexp.Regexp
-	version_url *regexp.Regexp
-	full_url    *regexp.Regexp
-	proxies     []string
-}
-
-var globals = GlobalValues{proxies: make([]string, 0)}
-
-func initialize_globals() error {
-	var err error
-	globals.block_regex, err = regexp.Compile(`/\..|catalog.json$`)
-	if err != nil {
-		return err
-	}
-	globals.product_url, err = regexp.Compile(fmt.Sprintf("^/%s/?$", catalog.RE_PRODUCT_NAME))
-	if err != nil {
-		return err
-	}
-	globals.format_url, err = regexp.Compile(fmt.Sprintf("^/%s/%s/?$", catalog.RE_PRODUCT_NAME, catalog.RE_FORMAT))
-	if err != nil {
-		return err
-	}
-	globals.version_url, err = regexp.Compile(fmt.Sprintf("^/%s/%s/%s/?$", catalog.RE_PRODUCT_NAME, catalog.RE_FORMAT, catalog.RE_URL_VERSION))
-	if err != nil {
-		return err
-	}
-	globals.full_url, err = regexp.Compile(fmt.Sprintf("^/%s/%s/%s/%s/(.*)$", catalog.RE_PRODUCT_NAME, catalog.RE_FORMAT, catalog.RE_URL_VERSION, catalog.RE_LANGUAGE))
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func GetRealAddress(r *http.Request, proxies []string) string {
-	address := strings.Split(r.RemoteAddr, ":")[0]
-
-	if xff := r.Header.Get("X-Forwarded-For"); proxies != nil && len(xff) != 0 {
-		entries := strings.Split(xff, ",")
-		for i := range entries {
-			entries[i] = strings.TrimSpace(entries[i])
-		}
-		for i := len(entries) - 1; i >= 0; i++ {
-			if !IsKnownProxy(entries[i], proxies) {
-				return entries[i]
-			}
-		}
-	}
-
-	return address
-}
-
-func IsKnownProxy(host string, proxies []string) bool {
-	for j := range proxies {
-		if host == proxies[j] {
-			return true
-		}
-	}
-	return false
 }

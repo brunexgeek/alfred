@@ -7,7 +7,7 @@ import (
 	"os"
 	"path"
 	"regexp"
-	"strconv"
+	"slices"
 	"strings"
 	"time"
 )
@@ -102,92 +102,14 @@ func (p Publication) Validate() error {
 	if !p.Format.IsValid() {
 		return fmt.Errorf("unsupported format")
 	}
-	if !p.Version.IsFull() {
-		return fmt.Errorf("incomplete or invalid semantic version")
-	}
 	return nil
 }
 
-type Version struct {
-	Major int    `json:"major"`
-	Minor int    `json:"minor"`
-	Fix   int    `json:"fix"`
-	Tag   string `json:"tag"`
-}
-
 const RE_PRODUCT_NAME = "([a-z][a-z0-9_]{0,31})"
-const RE_SHORT_VERSION = "([0-9]{1,3}\\.[0-9]{1,3})"
-const RE_URL_VERSION = "([0-9]{1,3}\\.[0-9]{1,3}|latest)"
 const RE_FORMAT = "(" + HTML + "|" + PDF + "|" + TGZ + ")"
 const RE_LANGUAGE = "(" + PT + "|" + ES + "|" + EN + ")"
 
 var name_re, _ = regexp.Compile("^" + RE_PRODUCT_NAME + "$")
-var full_re, _ = regexp.Compile(`^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$`)
-var short_re, _ = regexp.Compile("^" + RE_SHORT_VERSION + "$")
-
-func ParseVersion(value string) (Version, error) {
-	if !IsValid(value) {
-		return Version{}, fmt.Errorf("invalid semantic version")
-	}
-	parts := strings.Split(value, ".")
-	result := Version{}
-	result.Major, _ = strconv.Atoi(parts[0])
-	result.Minor, _ = strconv.Atoi(parts[1])
-	if len(parts) == 3 {
-		result.Fix, _ = strconv.Atoi(parts[2])
-	}
-	return result, nil
-}
-
-func (v Version) IsFull() bool {
-	return v.Major >= 0 && v.Minor >= 0 && v.Fix >= 0
-}
-
-func (v Version) IsShort() bool {
-	return v.Major >= 0 && v.Minor >= 0 && v.Fix == -1
-}
-
-func (v Version) IsValid() bool {
-	return v.IsShort() || v.IsFull()
-}
-
-func IsFull(v string) bool {
-	return full_re != nil && full_re.MatchString(v)
-}
-
-func IsShort(v string) bool {
-	return short_re != nil && short_re.MatchString(v)
-}
-
-func IsValid(v string) bool {
-	return IsShort(v) || IsFull(v)
-}
-
-func (v Version) GetShortVersion() Version {
-	if v.IsFull() {
-		return Version{Major: v.Major, Minor: v.Minor, Fix: -1}
-	} else {
-		return v
-	}
-}
-
-func (v Version) ToString() string {
-	if v.Fix < 0 {
-		return fmt.Sprintf("%d.%d", v.Major, v.Minor)
-	} else {
-		return fmt.Sprintf("%d.%d.%d", v.Major, v.Minor, v.Fix)
-	}
-}
-
-func (v Version) Newer(o Version) bool {
-	if v.Fix < 0 {
-		v.Fix = 0
-	}
-	if o.Fix < 0 {
-		o.Fix = 0
-	}
-	return v.Major > o.Major || v.Minor > o.Minor || v.Fix > o.Fix
-}
 
 func (v FormatCode) IsValid() bool {
 	return v == HTML || v == PDF || v == TGZ
@@ -239,7 +161,7 @@ func (c *Catalog) AddPublication(pub *Publication) {
 		language.Tainted = true
 	}
 	// try to update the latest version
-	if pub.Version.Newer(language.Latest) {
+	if pub.Version.IsNewer(language.Latest) {
 		language.Latest = pub.Version
 	}
 
@@ -280,7 +202,7 @@ func (c *Catalog) ScanEnvironment(root string) {
 			root := path.Join(root, entry.Name())
 			for _, entry := range read_directory(root) {
 				version, err := ParseVersion(entry.Name())
-				if !entry.IsDir() || err != nil {
+				if !entry.IsDir() || err != nil || !version.HasVersion() {
 					continue
 				}
 
@@ -366,17 +288,28 @@ func (c *Catalog) UpdateWebIndices() error {
 	}
 
 	if root != nil {
-		//title := c.Environment.Translate("Products")
-		err := generateIndexPage(c, root, c.Environment.Path, c.Environment.Templates.Products)
-		if err != nil {
-			return err
+		stringMap := StringMap{&c.Environment.Strings}
+		{
+			context := &Context{
+				Root:     root,
+				Strings:  stringMap,
+				PageType: "product",
+			}
+			err := generateIndexPage(context, c.Environment.Path, c.Environment.Templates.Products)
+			if err != nil {
+				return err
+			}
 		}
 
 		for _, product := range root.Children {
 			productPath := c.Environment.Path + "/" + product.Name
 			if product.Tainted {
-				//title := c.Environment.Translate("Languages")
-				err := generateIndexPage(c, product, productPath, c.Environment.Templates.Languages)
+				context := &Context{
+					Root:     product,
+					Strings:  stringMap,
+					PageType: "language",
+				}
+				err := generateIndexPage(context, productPath, c.Environment.Templates.Languages)
 				if err != nil {
 					return err
 				}
@@ -385,8 +318,12 @@ func (c *Catalog) UpdateWebIndices() error {
 			for _, language := range product.Children {
 				languagePath := productPath + "/" + language.Name
 				if language.Tainted {
-					//title := c.Environment.Translate("Versions")
-					err := generateIndexPage(c, language, languagePath, c.Environment.Templates.Versions)
+					context := &Context{
+						Root:     language,
+						Strings:  stringMap,
+						PageType: "version",
+					}
+					err := generateIndexPage(context, languagePath, c.Environment.Templates.Versions)
 					if err != nil {
 						return err
 					}
@@ -395,8 +332,12 @@ func (c *Catalog) UpdateWebIndices() error {
 				for _, version := range language.Children {
 					if version.Tainted {
 						versionPath := languagePath + "/" + version.Name
-						//title := c.Environment.Translate("Formats")
-						err := generateIndexPage(c, version, versionPath, c.Environment.Templates.Formats)
+						context := &Context{
+							Root:     version,
+							Strings:  stringMap,
+							PageType: "format",
+						}
+						err := generateIndexPage(context, versionPath, c.Environment.Templates.Formats)
 						if err != nil {
 							return err
 						}
@@ -429,9 +370,21 @@ type MenuItem struct {
 	Type           string
 }
 
+type StringMap struct {
+	table *map[string]string
+}
+
+func (t *StringMap) Get(key string) string {
+	if output, ok := (*t.table)[key]; ok {
+		return output
+	}
+	return key
+}
+
 type Context struct {
-	Item    *MenuItem
-	Strings *map[string]string
+	Root     *MenuItem
+	PageType string
+	Strings  StringMap
 }
 
 func writePage(fpath string, tpath string, context *Context) error {
@@ -459,10 +412,10 @@ func writePage(fpath string, tpath string, context *Context) error {
 
 	// fallback to a simple HTML page
 	const PAGE_HEADER = `<!DOCTYPE html><html><head><title>%s</title><meta charset="utf-8"></head><body><h1>%s</h1><ul>`
-	title := (*context.Strings)[context.Item.ChildrenType]
+	title := context.Strings.Get(context.PageType)
 	output.WriteString(fmt.Sprintf(PAGE_HEADER, title, title))
 
-	for _, item := range context.Item.Children {
+	for _, item := range context.Root.Children {
 		const PAGE_ITEM = "<li><a href='%s'>%s</a></li>"
 		output.WriteString(fmt.Sprintf(PAGE_ITEM, item.Name, item.TranslatedName))
 	}
@@ -474,7 +427,7 @@ func writePage(fpath string, tpath string, context *Context) error {
 }
 
 func createCatalogIndex(c *Catalog) ([]*MenuItem, error) {
-	menu := make([]*MenuItem, 0)
+	output := make([]*MenuItem, 0)
 	for _, product := range c.Products {
 
 		children, err := createLanguageIndex(c, product)
@@ -490,13 +443,19 @@ func createCatalogIndex(c *Catalog) ([]*MenuItem, error) {
 			Tainted:        product.Tainted,
 			Type:           "product",
 		}
-		menu = append(menu, item)
+		output = append(output, item)
 	}
-	return menu, nil
+
+	// sort products in ascending order
+	slices.SortStableFunc(output, func(a, b *MenuItem) int {
+		return strings.Compare(a.TranslatedName, b.TranslatedName)
+	})
+
+	return output, nil
 }
 
 func createLanguageIndex(c *Catalog, p *ProductEntry) ([]*MenuItem, error) {
-	menu := make([]*MenuItem, 0)
+	output := make([]*MenuItem, 0)
 	for _, language := range p.Languages {
 
 		children, err := createVersionIndex(c, language)
@@ -512,13 +471,19 @@ func createLanguageIndex(c *Catalog, p *ProductEntry) ([]*MenuItem, error) {
 			Tainted:        language.Tainted,
 			Type:           "language",
 		}
-		menu = append(menu, item)
+		output = append(output, item)
 	}
-	return menu, nil
+
+	// sort languages in ascending order
+	slices.SortStableFunc(output, func(a, b *MenuItem) int {
+		return strings.Compare(a.TranslatedName, b.TranslatedName)
+	})
+
+	return output, nil
 }
 
 func createVersionIndex(c *Catalog, l *LanguageEntry) ([]*MenuItem, error) {
-	menu := make([]*MenuItem, 0)
+	output := make([]*MenuItem, 0)
 	for _, version := range l.Versions {
 
 		children, err := createFormatIndex(c, version)
@@ -527,36 +492,48 @@ func createVersionIndex(c *Catalog, l *LanguageEntry) ([]*MenuItem, error) {
 		}
 
 		item := &MenuItem{
-			TranslatedName: c.Environment.Translate(version.Version.ToString()),
+			TranslatedName: version.Version.ToSortableString(),
 			Name:           version.Version.ToString(),
 			Children:       children,
 			ChildrenType:   "format",
 			Tainted:        version.Tainted,
 			Type:           "version",
 		}
-		menu = append(menu, item)
+		output = append(output, item)
 	}
-	return menu, nil
+
+	// sort versions in descending order
+	slices.SortStableFunc(output, func(a, b *MenuItem) int {
+		return strings.Compare(a.TranslatedName, b.TranslatedName) * -1
+	})
+
+	for _, item := range output {
+		item.TranslatedName = item.Name
+	}
+
+	return output, nil
 }
 
 func createFormatIndex(c *Catalog, v *VersionEntry) ([]*MenuItem, error) {
-	menu := make([]*MenuItem, 0)
+	output := make([]*MenuItem, 0)
 	for _, format := range v.Formats {
 		item := &MenuItem{
 			TranslatedName: c.Environment.Translate(string(format.Format)),
 			Name:           string(format.Format),
 			Type:           "format",
 		}
-		menu = append(menu, item)
+		output = append(output, item)
 	}
-	return menu, nil
+
+	// sort format in ascending order
+	slices.SortStableFunc(output, func(a, b *MenuItem) int {
+		return strings.Compare(a.TranslatedName, b.TranslatedName)
+	})
+
+	return output, nil
 }
 
-func generateIndexPage(c *Catalog, root *MenuItem, basePath string, template string) error {
-	context := &Context{
-		Item:    root,
-		Strings: &c.Environment.Strings,
-	}
+func generateIndexPage(context *Context, basePath string, template string) error {
 	filename := path.Join(basePath, "index.html")
 	return writePage(filename, template, context)
 }

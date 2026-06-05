@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>{{ .Strings.Get .PageType }}</title>
+    <style>
+        table {
+        border-collapse: collapse;
+        }
+
+        tr:first-child td, tr:first-child th {
+            border-top: 1px solid black;
+        }
+        td, th {
+            border-bottom: 1px solid black;
+            padding: .5em;
+        }
+        td.language {
+            text-transform: uppercase;
+        }
+    </style>
+</head>
+<body>
+    <h1>{{ .Strings.Get .PageType }}</h1>
+    <table>
+        <tbody>
+            {{ range $first := .Root.Children }}
+                {{ range $second := $first.Children }}
+                    {{ range $third := $second.Children }}
+                        {{ range $forth := $third.Children }}
+                            <tr>
+                                <td><a href='{{$first.Name}}'>{{$first.TranslatedName}}</a></td>
+                                <td class="{{$second.Type}}"><a href='{{$second.Name}}'>{{$second.TranslatedName}}</a></td>
+                                <td><a href='{{$third.Name}}'>{{$third.TranslatedName}}</a></td>
+                                <td><a href='{{$forth.Name}}'>{{$forth.TranslatedName}}</a></td>
+                            </tr>
+                        {{ end }}
+                    {{ end }}
+                {{ end }}
+            {{ end }}
+        </tbody>
+    </table>
+</body>
+</html>
