@@ -12,8 +12,8 @@ import (
 )
 
 type Config struct {
-	Manager      Manager                `json:"manager"`
-	Environments []*catalog.Environment `json:"environments"`
+	Manager      Manager               `json:"manager"`
+	Environments []*catalog.Parameters `json:"environments"`
 	Location     string
 }
 
@@ -125,17 +125,16 @@ func validate_and_return(cpath string, config *Config) (*Config, error) {
 			return nil, err
 		}
 
-		// make sure we have translations for item types
-		names := map[string]string{
-			"catalog":  "Catalog",
-			"product":  "Product",
-			"language": "Language",
-			"version":  "Version",
-			"format":   "Format",
+		// make sure we have substitutions for page types
+		names := map[catalog.EntryType]string{
+			catalog.TypeEnvironment: "Products",
+			catalog.TypeProduct:     "Languages",
+			catalog.TypeLanguage:    "Versions",
+			catalog.TypeVersion:     "Formats",
 		}
 		for key, value := range names {
-			if _, ok := env.Strings[key]; !ok {
-				env.Strings[key] = value
+			if _, ok := env.Strings[string(key)]; !ok {
+				env.Strings[string(key)] = value
 			}
 		}
 	}

@@ -170,7 +170,7 @@ func publish_handler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// publish the resource
-	summary, err := publisher.Publish(cat.Environment.Path, &pub, attachment)
+	summary, err := publisher.Publish(cat.Parameters.Path, &pub, attachment)
 	if err != nil {
 		send_error(400, err.Error(), w)
 		return
@@ -262,7 +262,7 @@ func load_configuration(cpath string) (*Config, error) {
 	return OpenConfiguration(cpath)
 }
 
-var environments = make(map[string]*catalog.Catalog)
+var environments = make(map[string]*catalog.Environment)
 
 func main() {
 	install_signal_hook()
@@ -288,20 +288,20 @@ func main() {
 	}
 
 	for _, entry := range config.Environments {
-		context := catalog.NewCatalog(entry)
+		environment := catalog.NewEnvironment(entry)
 		if err != nil {
 			log.Error(err)
 			os.Exit(1)
 		}
-		context.ScanEnvironment(entry.Path)
-		log.Infof("Catalog with %d products\n", len(context.Products))
-		err = context.UpdateWebIndices()
+		environment.ScanEnvironment(entry.Path)
+		log.Infof("Catalog with %d products\n", len(environment.Root.Children))
+		err = environment.UpdateWebIndices()
 		if err != nil {
 			log.Error(err)
 			os.Exit(1)
 		}
 
-		environments[entry.Name] = context
+		environments[entry.Name] = environment
 		log.Infof("Initialized environment '%s' at '%s'\n", entry.Name, entry.Path)
 	}
 

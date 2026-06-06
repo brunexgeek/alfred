@@ -1,11 +1,12 @@
 package catalog
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path"
+	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -13,14 +14,13 @@ import (
 
 var name_re, _ = regexp.Compile(`^([a-z][a-z0-9_\-]{0,31})$`)
 
-type Catalog struct {
-	mutex       sync.Mutex               `json:"-"`
-	Tainted     bool                     `json:"-"`
-	Environment *Environment             `json:"-"`
-	Products    map[string]*ProductEntry `json:"products"`
+type Environment struct {
+	mutex      sync.Mutex
+	Parameters *Parameters
+	Root       Entry
 }
 
-type Environment struct {
+type Parameters struct {
 	Name      string            `json:"name"`
 	Path      string            `json:"path"`
 	Templates Templates         `json:"templates"`
@@ -34,36 +34,25 @@ type Templates struct {
 	Formats   string `json:"formats"`
 }
 
-type ProductEntry struct {
-	Id        string                          `json:"product"` // unique product name (lowercase)
-	Tainted   bool                            `json:"-"`
-	Path      string                          `json:"-"`
-	Url       string                          `json:"url"`
-	Languages map[LanguageCode]*LanguageEntry `json:"languages"` // indexed by language code
-}
+type EntryType string
 
-type LanguageEntry struct {
-	Language LanguageCode             `json:"language"`
-	Tainted  bool                     `json:"-"`
-	Path     string                   `json:"-"`
-	Url      string                   `json:"url"`
-	Latest   Version                  `json:"latest"`
-	Versions map[string]*VersionEntry `json:"versions"` // indexed by semantic version
-}
+const (
+	TypeEnvironment EntryType = "TypeEnvironment"
+	TypeProduct     EntryType = "TypeProduct"
+	TypeLanguage    EntryType = "TypeLanguage"
+	TypeVersion     EntryType = "TypeVersion"
+	TypeFormat      EntryType = "TypeFormat"
+)
 
-type VersionEntry struct {
-	Version Version                     `json:"version"`
-	Tainted bool                        `json:"-"`
-	Path    string                      `json:"-"`
-	Url     string                      `json:"url"`
-	Formats map[FormatCode]*FormatEntry `json:"formats"` // indexed by format code
-}
-
-type FormatEntry struct {
-	Format  FormatCode `json:"format"`
-	Path    string     `json:"-"`
-	Url     string     `json:"url"`
-	RelPath string     `json:"path"`
+type Entry struct {
+	Parent     *Entry
+	Id         string // original ID
+	SortableId string // normalized ID to enable sorting
+	Title      string // ID after substitutions or custom title
+	Path       string // absolute path to this entry in the disk
+	Children   map[string]*Entry
+	Tainted    bool // was this entry changed since last index generation?
+	Type       EntryType
 }
 
 type Publication struct {
@@ -74,11 +63,15 @@ type Publication struct {
 	Date     time.Time    `json:"date"`
 }
 
-func NewCatalog(env *Environment) *Catalog {
-	return &Catalog{
-		Tainted:     true,
-		Environment: env,
-		Products:    make(map[string]*ProductEntry),
+func NewEnvironment(params *Parameters) *Environment {
+	return &Environment{
+		Parameters: params,
+		Root: Entry{
+			Path:     params.Path,
+			Children: make(map[string]*Entry),
+			Type:     TypeEnvironment,
+			Tainted:  true,
+		},
 	}
 }
 
@@ -98,22 +91,27 @@ func (p Publication) Validate() error {
 	return nil
 }
 
-func (c *Catalog) Serialize() ([]byte, error) {
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
-
-	data, err := json.Marshal(c)
-	if err != nil {
-		return nil, err
-	}
-	return data, nil
-}
-
 func (p *Publication) DataPath() string {
 	return "/" + path.Join(p.Product, string(p.Language), p.Version.ToString(), string(p.Format))
 }
 
-func (c *Catalog) AddPublication(pub *Publication) error {
+func (e *Entry) AppendChild(item *Entry) {
+	item.Path = path.Join(e.Path, item.Id)
+	item.Parent = e
+	if item.Children == nil {
+		item.Children = make(map[string]*Entry, 0)
+	}
+	if item.SortableId == "" {
+		item.SortableId = item.Id
+	}
+	if item.Title == "" {
+		item.Title = item.Id
+	}
+	e.Tainted = true
+	e.Children[item.Id] = item
+}
+
+func (c *Environment) AddPublication(pub *Publication) error {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
@@ -121,63 +119,89 @@ func (c *Catalog) AddPublication(pub *Publication) error {
 	if err != nil {
 		return err
 	}
+
 	ok := false
-	var product *ProductEntry
-	var language *LanguageEntry
-	var version *VersionEntry
+	var product *Entry
+	var language *Entry
+	var version *Entry
 
-	root := path.Join(c.Environment.Path, pub.Product)
-	url := strings.Join([]string{".", pub.Product}, "/")
-	if product, ok = c.Products[pub.Product]; !ok {
-		product = &ProductEntry{pub.Product, true, root, url, make(map[LanguageCode]*LanguageEntry, 0)}
-		c.Products[pub.Product] = product
-		c.Tainted = true
+	if product, ok = c.Root.Children[pub.Product]; !ok {
+		title := c.Parameters.Translate(pub.Product)
+		product = &Entry{
+			Id:         pub.Product,
+			SortableId: strings.ToLower(title),
+			Title:      title,
+			Type:       TypeProduct,
+		}
+		c.Root.AppendChild(product)
 	}
 
-	root = path.Join(root, string(pub.Language))
-	url = strings.Join([]string{url, string(pub.Language)}, "/")
-	if language, ok = product.Languages[pub.Language]; !ok {
-		language = &LanguageEntry{pub.Language, true, root, url, pub.Version, make(map[string]*VersionEntry, 0)}
-		product.Languages[pub.Language] = language
-		product.Tainted = true
+	if language, ok = product.Children[string(pub.Language)]; !ok {
+		id := "language_" + string(pub.Language)
+		title, ok := c.Parameters.Strings[id]
+		if !ok {
+			title = pub.Language.GetName()
+		}
+		language = &Entry{
+			Id:         string(pub.Language),
+			SortableId: strings.ToLower(title),
+			Title:      title,
+			Type:       TypeLanguage,
+		}
+		product.AppendChild(language)
 	}
 
-	root = path.Join(root, pub.Version.ToString())
-	url = strings.Join([]string{url, pub.Version.ToString()}, "/")
-	if version, ok = language.Versions[pub.Version.ToString()]; !ok {
-		version = &VersionEntry{pub.Version, true, root, url, make(map[FormatCode]*FormatEntry, 0)}
-		language.Versions[pub.Version.ToString()] = version
-		language.Tainted = true
-	}
-	// try to update the latest version
-	if pub.Version.IsNewer(language.Latest) {
-		language.Latest = pub.Version
+	if version, ok = language.Children[pub.Version.ToString()]; !ok {
+		version = &Entry{
+			Id:         pub.Version.ToString(),
+			SortableId: pub.Version.ToSortableString(),
+			Title:      pub.Version.ToString(),
+			Type:       TypeVersion,
+		}
+		language.AppendChild(version)
 	}
 
-	root = path.Join(root, string(pub.Format))
-	url = strings.Join([]string{url, string(pub.Format)}, "/")
-	if _, ok = version.Formats[pub.Format]; !ok {
-		format := &FormatEntry{pub.Format, root, url, pub.DataPath()}
-		version.Formats[pub.Format] = format
-		version.Tainted = true
+	if _, ok = version.Children[string(pub.Format)]; !ok {
+		format := &Entry{
+			Id:         string(pub.Format),
+			SortableId: string(pub.Format),
+			Title:      c.Parameters.Translate(string(pub.Format)),
+			Type:       TypeFormat,
+		}
+		version.AppendChild(format)
 	}
 
 	return nil
 }
 
-func (c *Catalog) ScanEnvironment(root string) {
+func isRemoved(entry os.DirEntry, parentDir string) bool {
+	if !entry.IsDir() {
+		return false
+	}
+
+	marker := filepath.Join(parentDir, entry.Name(), "__remove__")
+
+	info, err := os.Stat(marker)
+	if err != nil {
+		return false
+	}
+
+	return !info.IsDir()
+}
+
+func (c *Environment) ScanEnvironment(basePath string) {
 	// for each product
-	for _, entry := range read_directory(root) {
+	for _, entry := range read_directory(basePath) {
 		product := entry.Name()
-		if !entry.IsDir() || !name_re.MatchString(product) {
+		if !entry.IsDir() || !name_re.MatchString(product) || isRemoved(entry, basePath) {
 			continue
 		}
 
 		// for each language
-		root := path.Join(root, product)
+		root := path.Join(basePath, product)
 		for _, entry := range read_directory(root) {
 			language := LanguageCode(entry.Name())
-			if !entry.IsDir() || !language.IsValid() {
+			if !entry.IsDir() || !language.IsValid() || isRemoved(entry, root) {
 				continue
 			}
 
@@ -185,7 +209,7 @@ func (c *Catalog) ScanEnvironment(root string) {
 			root := path.Join(root, entry.Name())
 			for _, entry := range read_directory(root) {
 				version, err := ParseVersion(entry.Name())
-				if !entry.IsDir() || err != nil || !version.HasVersion() {
+				if !entry.IsDir() || err != nil || !version.HasVersion() || isRemoved(entry, root) {
 					continue
 				}
 
@@ -193,7 +217,7 @@ func (c *Catalog) ScanEnvironment(root string) {
 				root := path.Join(root, entry.Name())
 				for _, entry := range read_directory(root) {
 					format := FormatCode(entry.Name())
-					if !entry.IsDir() || !format.IsValid() {
+					if !entry.IsDir() || !format.IsValid() || isRemoved(entry, root) {
 						continue
 					}
 
@@ -211,103 +235,78 @@ func (c *Catalog) ScanEnvironment(root string) {
 	}
 }
 
-func (c *Catalog) UpdateWebIndices() error {
+func (c *Environment) ObsoletePublication(path string) error {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
-	toc, err := createCatalogIndex(c)
-	if err != nil {
-		return err
-	}
-	root := &MenuItem{
-		Name:           "catalog",
-		TranslatedName: c.Environment.Translate("catalog"),
-		Children:       toc,
-		ChildrenType:   "product",
-		Type:           "catalog",
-	}
+	//parts := strings.Split(path, "/")
 
-	stringMap := StringMap{&c.Environment.Strings}
-	if c.Tainted {
-		context := &Context{
-			Root:     root,
-			Strings:  stringMap,
-			PageType: "productList",
+	return nil
+}
+
+func (c *Environment) updateWebIndex(entry *Entry) error {
+	if entry.Tainted {
+		items := make([]*MenuItem, 0, len(entry.Children))
+		for _, child := range entry.Children {
+			items = append(items, &MenuItem{
+				Id:         child.Id,
+				Title:      child.Title,
+				SortableId: child.SortableId,
+				Type:       string(child.Type),
+			})
 		}
-		err := generateIndexPage(context, c.Environment.Path, c.Environment.Templates.Products)
+		// sort products in ascending order
+		slices.SortStableFunc(items, func(a, b *MenuItem) int {
+			return strings.Compare(a.SortableId, b.SortableId)
+		})
+
+		context := Context{
+			Items:     items,
+			PageTitle: c.Parameters.Translate(string(entry.Type)),
+			PageType:  string(entry.Type),
+			Strings:   StringMap{&c.Parameters.Strings},
+		}
+
+		var tpath string
+		switch entry.Type {
+		case TypeEnvironment:
+			tpath = c.Parameters.Templates.Products
+		case TypeProduct:
+			tpath = c.Parameters.Templates.Languages
+		case TypeLanguage:
+			tpath = c.Parameters.Templates.Versions
+		case TypeVersion:
+			tpath = c.Parameters.Templates.Formats
+		}
+
+		err := generateIndexPage(&context, entry.Path, tpath)
 		if err != nil {
 			return err
 		}
+		err = generateMetadata(&context, entry.Path)
+		if err != nil {
+			return err
+		}
+
+		entry.Tainted = false
 	}
 
-	for _, product := range root.Children {
-		productPath := c.Environment.Path + "/" + product.Name
-		if product.Tainted {
-			context := &Context{
-				Root:     product,
-				Strings:  stringMap,
-				PageType: "languageList",
-			}
-			err := generateIndexPage(context, productPath, c.Environment.Templates.Languages)
-			if err != nil {
-				return err
-			}
-		}
-
-		for _, language := range product.Children {
-			languagePath := productPath + "/" + language.Name
-			if language.Tainted {
-				context := &Context{
-					Root:     language,
-					Strings:  stringMap,
-					PageType: "versionList",
-				}
-				err := generateIndexPage(context, languagePath, c.Environment.Templates.Versions)
-				if err != nil {
-					return err
-				}
-			}
-
-			for _, version := range language.Children {
-				if version.Tainted {
-					versionPath := languagePath + "/" + version.Name
-					context := &Context{
-						Root:     version,
-						Strings:  stringMap,
-						PageType: "formatList",
-					}
-					err := generateIndexPage(context, versionPath, c.Environment.Templates.Formats)
-					if err != nil {
-						return err
-					}
-				}
-			}
-		}
+	for _, child := range entry.Children {
+		c.updateWebIndex(child)
 	}
 
-	// untaint everything and generate JSON metadata
-	err = nil
-	c.Tainted = false
-	for _, product := range c.Products {
-		if product.Tainted {
-			if err == nil {
-				err = generateMetadata(product, c.Environment.Path)
-			}
-			product.Tainted = false
-		}
-		for _, language := range product.Languages {
-			language.Tainted = false
-			for _, version := range language.Versions {
-				version.Tainted = false
-			}
-		}
-	}
-
-	return err
+	return nil
 }
 
-func (e *Environment) Translate(expr string) string {
-	output, ok := e.Strings[expr]
+func (c *Environment) UpdateWebIndices() error {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	return c.updateWebIndex(&c.Root)
+}
+
+func (p *Parameters) Translate(expr string) string {
+	output, ok := p.Strings[expr]
 	if !ok {
 		return expr
 	}

@@ -207,3 +207,7 @@ func (v LanguageCode) GetName() string {
 	}
 	return ""
 }
+
+func GetLanguageName(lang string) string {
+	return LanguageCode(lang).GetName()
+}
