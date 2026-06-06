@@ -17,7 +17,7 @@ func ReadAll(r io.Reader, limit uint32) ([]byte, error) {
 		total += uint32(n)
 		buf = buf[:len(buf)+n]
 		if total > limit {
-			return buf, fmt.Errorf("Too much data")
+			return buf, fmt.Errorf("Amount of data exceeds the limit of %d bytes", limit)
 		}
 		if err != nil {
 			if err == io.EOF {

@@ -13,7 +13,10 @@ import (
 	"strings"
 )
 
-const MAX_PAYLOAD = 50 * 1024 * 1024
+const MAX_PAYLOAD = 25 * 1024 * 1024
+const PERMISSIONS = 0744
+
+var log extra.Logger = *extra.NewLogger(extra.DebugLevel)
 
 type Publisher struct {
 	Path string // path to the catalog in disk
@@ -30,7 +33,7 @@ func Publish(root string, pub *catalog.Publication, input io.Reader) (*Summary, 
 	}
 	data_path := path.Join(root, pub.DataPath())
 
-	err := os.MkdirAll(data_path, 0755)
+	err := os.MkdirAll(data_path, PERMISSIONS)
 	if err != nil {
 		return nil, err
 	}
@@ -72,7 +75,7 @@ func Publish(root string, pub *catalog.Publication, input io.Reader) (*Summary, 
 }
 
 func save_file(fpath string, input io.Reader) (*Summary, error) {
-	output, err := os.OpenFile(fpath, os.O_WRONLY|os.O_TRUNC|os.O_CREATE, 0755)
+	output, err := os.OpenFile(fpath, os.O_WRONLY|os.O_TRUNC|os.O_CREATE, PERMISSIONS)
 	if err != nil {
 		return nil, fmt.Errorf("unable to create file %s: %s", fpath, err.Error())
 	}
@@ -98,29 +101,6 @@ func inflate(gzstream io.Reader) (*bytes.Reader, error) {
 	}
 
 	return bytes.NewReader(data), nil
-}
-
-func deflate(ostream io.Writer, istream io.Reader) error {
-	gstream := gzip.NewWriter(ostream)
-	_, err := io.Copy(gstream, istream)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func deflate_to_file(fpath string, istream io.Reader) error {
-	file, err := os.OpenFile(fpath, os.O_WRONLY|os.O_TRUNC|os.O_CREATE, 0755)
-	if err != nil {
-		return fmt.Errorf("unable to create file %s: %s", fpath, err.Error())
-	}
-	err = deflate(file, istream)
-	if err != nil {
-		file.Close()
-		return fmt.Errorf("unable to copy data to %s: %s", fpath, err.Error())
-	}
-	file.Close()
-	return nil
 }
 
 // Validate a TAR package content
@@ -179,12 +159,12 @@ func extract(dest string, stream *bytes.Reader) (*Summary, error) {
 
 		if header.Typeflag == tar.TypeDir {
 			target := path.Join(dest, npath)
-			if err := os.Mkdir(target, 0755); err != nil {
-				//return nil, fmt.Errorf("unable to create directory '%s': %s", target, err.Error())
+			if err := os.Mkdir(target, PERMISSIONS); err != nil {
+				return nil, fmt.Errorf("unable to create directory '%s': %s", target, err.Error())
 			}
 		} else {
-			//fmt.Printf("  Inflating %s\n", npath)
-			outFile, err := os.OpenFile(path.Join(dest, npath), os.O_WRONLY|os.O_TRUNC|os.O_CREATE, 0755)
+			log.Debugf("  Inflating %s\n", npath)
+			outFile, err := os.OpenFile(path.Join(dest, npath), os.O_WRONLY|os.O_TRUNC|os.O_CREATE, PERMISSIONS)
 			if err != nil {
 				return nil, fmt.Errorf("unable to create file %s: %s", npath, err.Error())
 			}
@@ -202,7 +182,7 @@ func extract(dest string, stream *bytes.Reader) (*Summary, error) {
 			name := path.Base(npath)
 			if strings.ToLower(name) == "index.html" && name != "index.html" {
 				lpath := path.Join(path.Dir(npath), "index.html")
-				//fmt.Printf("  Copying %s to %s\n", npath, lpath)
+				log.Debugf("  Copying %s to %s\n", npath, lpath)
 				copy_file(path.Join(dest, npath), path.Join(dest, lpath))
 			}
 		}

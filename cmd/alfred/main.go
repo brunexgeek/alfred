@@ -16,18 +16,18 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
-	"sync"
+	"sync/atomic"
 	"time"
 
 	"brunexgeek/alfred/internal/catalog"
 	"brunexgeek/alfred/internal/extra"
-	"brunexgeek/alfred/internal/language"
 	"brunexgeek/alfred/internal/publisher"
 )
 
 //go:embed web/index.html
 //go:embed web/bootstrap.min.css
 var resources embed.FS
+var log extra.Logger = *extra.NewLogger(extra.DebugLevel)
 
 const max_upload_size = 10 * 1024 * 1024
 
@@ -37,7 +37,7 @@ const ENUMERATE_ENDPOINT = "/v1/enumerate"
 const ENVIRONMENTS_ENDPOINT = "/v1/environments"
 const WEB_ENDPOINT = "/"
 
-var busy sync.Mutex
+var indexPending int32 = 0
 
 type ErrorInfo struct {
 	Message string `json:"message"`
@@ -66,6 +66,8 @@ func send_error(status int, message string, w http.ResponseWriter) {
 	}
 	w.Header().Set("Server", server_version)
 	http.Error(w, string(data), status)
+
+	log.Errorf("HTTP %d - %s", status, message)
 }
 
 type Part struct {
@@ -142,7 +144,7 @@ func publish_handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	env, ok := environments[request.Environment]
+	cat, ok := environments[request.Environment]
 	if len(request.Environment) == 0 || !ok {
 		send_error(400, "Unkown environment", w)
 		return
@@ -158,7 +160,7 @@ func publish_handler(w http.ResponseWriter, r *http.Request) {
 		Product:  strings.ToLower(request.Product),
 		Version:  version,
 		Format:   catalog.FormatCode(request.Format),
-		Language: language.LanguageCode(request.Language),
+		Language: catalog.LanguageCode(request.Language),
 		Date:     time.Now(),
 	}
 
@@ -167,22 +169,23 @@ func publish_handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// start of critical region
-	busy.Lock()
-	defer busy.Unlock()
-
 	// publish the resource
-	summary, err := publisher.Publish(env.Environment.Path, &pub, attachment)
+	summary, err := publisher.Publish(cat.Environment.Path, &pub, attachment)
 	if err != nil {
 		send_error(400, err.Error(), w)
 		return
 	}
+
 	// update catalog
-	env.AddPublication(&pub)
-	// update all index pages
-	err = env.UpdateWebIndices()
-	if err != nil {
-		fmt.Printf("ERROR %s\n", err)
+	cat.AddPublication(&pub)
+	// update index pages if an update is not in progress
+	if atomic.CompareAndSwapInt32(&indexPending, 0, 1) {
+		log.Debugf("Trying to update index")
+		err = cat.UpdateWebIndices()
+		if err != nil {
+			log.Error(err)
+		}
+		atomic.StoreInt32(&indexPending, 0)
 	}
 
 	var result struct {
@@ -192,6 +195,8 @@ func publish_handler(w http.ResponseWriter, r *http.Request) {
 	result.Count = summary.Count
 	result.Size = summary.Size
 	result.URL = fmt.Sprintf("%s/", pub.DataPath())
+
+	log.Infof("Published %s", pub.DataPath())
 
 	send_object(http.StatusOK, result, w)
 }
@@ -253,7 +258,7 @@ func default_config() (string, error) {
 }
 
 func load_configuration(cpath string) (*Config, error) {
-	fmt.Printf("Loading configuration from '%s'\n", cpath)
+	log.Infof("Loading configuration from '%s'\n", cpath)
 	return OpenConfiguration(cpath)
 }
 
@@ -262,14 +267,14 @@ var environments = make(map[string]*catalog.Catalog)
 func main() {
 	install_signal_hook()
 
-	fmt.Printf("Alfred %s\n", ALFRED_VERSION)
+	log.Infof("Alfred %s\n", ALFRED_VERSION)
 
 	cpath := ""
 	if len(os.Args) == 1 {
 		var err error
 		cpath, err = default_config()
 		if err != nil {
-			fmt.Printf("ERROR %s\n", err)
+			log.Error(err)
 			os.Exit(1)
 		}
 	} else {
@@ -278,26 +283,26 @@ func main() {
 
 	config, err := load_configuration(cpath)
 	if err != nil {
-		fmt.Printf("ERROR %s\n", err)
+		log.Error(err)
 		os.Exit(1)
 	}
 
 	for _, entry := range config.Environments {
 		context := catalog.NewCatalog(entry)
 		if err != nil {
-			fmt.Printf("ERROR %s\n", err)
+			log.Error(err)
 			os.Exit(1)
 		}
 		context.ScanEnvironment(entry.Path)
-		fmt.Printf("Catalog with %d products\n", len(context.Products))
+		log.Infof("Catalog with %d products\n", len(context.Products))
 		err = context.UpdateWebIndices()
 		if err != nil {
-			fmt.Printf("ERROR %s\n", err)
+			log.Error(err)
 			os.Exit(1)
 		}
 
 		environments[entry.Name] = context
-		fmt.Printf("Initialized environment '%s' at '%s'\n", entry.Name, entry.Path)
+		log.Infof("Initialized environment '%s' at '%s'\n", entry.Name, entry.Path)
 	}
 
 	stripped, _ := fs.Sub(resources, "web")
@@ -311,7 +316,7 @@ func main() {
 	mux.Handle(WEB_ENDPOINT, http.FileServer(http.FS(stripped)))
 	server := &http.Server{Addr: address, Handler: mux}
 	go server.ListenAndServe()
-	fmt.Printf("[API] Listening at http://%s\n", address)
+	log.Infof("Manager API listening at http://%s\n", address)
 	servers = append(servers, server)
 
 	select {
