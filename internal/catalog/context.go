@@ -13,18 +13,18 @@ const PERMISSIONS = 0644
 
 var log extra.Logger = *extra.NewLogger(extra.DebugLevel)
 
-type MenuItem struct {
-	Id         string
-	SortableId string
-	Title      string
-	Type       string
+type Context struct {
+	PageTitle string      // suggested title for the page based on the 'PageType', after substitution
+	PageType  string      // page type; possible values are 'TypeEnvironment', 'TypeProduct', 'TypeLanguage' and 'TypeVersion'
+	Strings   StringMap   // object to perform substitutions; uses values from 'environment.strings'
+	Items     []*MenuItem // array of items in this level
 }
 
-type Context struct {
-	Items     []*MenuItem
-	PageTitle string
-	PageType  string
-	Strings   StringMap
+type MenuItem struct {
+	Id         string // unique ID
+	SortableId string // normalized ID to enable sorting
+	Title      string // same as 'Id' or substitution
+	Type       string // item type; possible values are 'TypeProduct', 'TypeLanguage', 'TypeVersion' and 'TypeFormat'
 }
 
 func generateIndexPage(context *Context, basePath string, tpath string) error {
