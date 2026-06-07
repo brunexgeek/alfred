@@ -27,7 +27,6 @@ import (
 //go:embed web/index.html
 //go:embed web/bootstrap.min.css
 var resources embed.FS
-var log extra.Logger = *extra.NewLogger(extra.DebugLevel)
 
 const max_upload_size = 10 * 1024 * 1024
 
@@ -67,7 +66,7 @@ func send_error(status int, message string, w http.ResponseWriter) {
 	w.Header().Set("Server", server_version)
 	http.Error(w, string(data), status)
 
-	log.Errorf("HTTP %d - %s", status, message)
+	extra.GetDefaultLog().Errorf("HTTP %d - %s", status, message)
 }
 
 type Part struct {
@@ -118,6 +117,7 @@ type PublishRequest struct {
 }
 
 func publish_handler(w http.ResponseWriter, r *http.Request) {
+	log := extra.GetDefaultLog()
 	parts, err := extract_parts(r)
 	if err != nil {
 		send_error(400, err.Error(), w)
@@ -258,7 +258,7 @@ func default_config() (string, error) {
 }
 
 func load_configuration(cpath string) (*Config, error) {
-	log.Infof("Loading configuration from '%s'\n", cpath)
+	extra.GetDefaultLog().Infof("Loading configuration from '%s'\n", cpath)
 	return OpenConfiguration(cpath)
 }
 
@@ -266,6 +266,7 @@ var environments = make(map[string]*catalog.Environment)
 
 func main() {
 	install_signal_hook()
+	log := extra.GetDefaultLog()
 
 	log.Infof("Alfred %s\n", ALFRED_VERSION)
 
@@ -286,6 +287,8 @@ func main() {
 		log.Error(err)
 		os.Exit(1)
 	}
+	extra.SetDefaultLevel(extra.ParseLevel(config.LogLevel))
+	log = extra.NewLogger()
 
 	for _, entry := range config.Environments {
 		environment := catalog.NewEnvironment(entry)
@@ -294,7 +297,10 @@ func main() {
 			os.Exit(1)
 		}
 		environment.ScanEnvironment(entry.Path)
-		log.Infof("Catalog with %d products\n", len(environment.Root.Children))
+		log.Infof("Found environment '%s' at '%s' with %d products\n",
+			environment.Parameters.Name,
+			environment.Parameters.Path,
+			len(environment.Root.Children))
 		err = environment.UpdateWebIndices()
 		if err != nil {
 			log.Error(err)

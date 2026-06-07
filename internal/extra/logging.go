@@ -34,9 +34,25 @@ type Logger struct {
 	useColor bool
 }
 
-func NewLogger(level Level) *Logger {
+var defaultLevel Level = InfoLevel
+var defaultLog *Logger = NewLogger()
+
+func SetDefaultLevel(level Level) {
+	if level >= TraceLevel && level <= ErrorLevel {
+		defaultLevel = level
+	} else {
+		defaultLevel = InfoLevel
+	}
+	defaultLog.SetLevel(defaultLevel)
+}
+
+func GetDefaultLog() *Logger {
+	return defaultLog
+}
+
+func NewLogger() *Logger {
 	return &Logger{
-		level:    level,
+		level:    defaultLevel,
 		logger:   log.New(os.Stdout, "", log.LstdFlags|log.Lmicroseconds),
 		useColor: term.IsTerminal(int(os.Stdout.Fd())),
 	}
@@ -60,7 +76,9 @@ func ParseLevel(level string) Level {
 }
 
 func (l *Logger) SetLevel(level Level) {
-	l.level = level
+	if level >= TraceLevel && level <= ErrorLevel {
+		l.level = level
+	}
 }
 
 func (l *Logger) logf(level Level, label string, color string, format string, args ...any) {

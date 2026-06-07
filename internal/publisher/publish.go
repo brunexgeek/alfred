@@ -14,9 +14,8 @@ import (
 )
 
 const MAX_PAYLOAD = 25 * 1024 * 1024
-const PERMISSIONS = 0744
-
-var log extra.Logger = *extra.NewLogger(extra.DebugLevel)
+const directoryPermissions = 0744
+const filePermissions = 0644
 
 type Publisher struct {
 	Path string // path to the catalog in disk
@@ -33,7 +32,7 @@ func Publish(root string, pub *catalog.Publication, input io.Reader) (*Summary, 
 	}
 	data_path := path.Join(root, pub.DataPath())
 
-	err := os.MkdirAll(data_path, PERMISSIONS)
+	err := os.MkdirAll(data_path, directoryPermissions)
 	if err != nil {
 		return nil, err
 	}
@@ -75,7 +74,7 @@ func Publish(root string, pub *catalog.Publication, input io.Reader) (*Summary, 
 }
 
 func save_file(fpath string, input io.Reader) (*Summary, error) {
-	output, err := os.OpenFile(fpath, os.O_WRONLY|os.O_TRUNC|os.O_CREATE, PERMISSIONS)
+	output, err := os.OpenFile(fpath, os.O_WRONLY|os.O_TRUNC|os.O_CREATE, filePermissions)
 	if err != nil {
 		return nil, fmt.Errorf("unable to create file %s: %s", fpath, err.Error())
 	}
@@ -139,6 +138,7 @@ func extract(dest string, stream *bytes.Reader) (*Summary, error) {
 
 	tarReader := tar.NewReader(stream)
 	summary := Summary{}
+	log := extra.GetDefaultLog()
 
 	for true {
 		header, err := tarReader.Next()
@@ -159,12 +159,12 @@ func extract(dest string, stream *bytes.Reader) (*Summary, error) {
 
 		if header.Typeflag == tar.TypeDir {
 			target := path.Join(dest, npath)
-			if err := os.Mkdir(target, PERMISSIONS); err != nil {
+			if err := os.Mkdir(target, directoryPermissions); err != nil {
 				return nil, fmt.Errorf("unable to create directory '%s': %s", target, err.Error())
 			}
 		} else {
-			log.Debugf("  Inflating %s\n", npath)
-			outFile, err := os.OpenFile(path.Join(dest, npath), os.O_WRONLY|os.O_TRUNC|os.O_CREATE, PERMISSIONS)
+			log.Tracef("Inflating %s\n", npath)
+			outFile, err := os.OpenFile(path.Join(dest, npath), os.O_WRONLY|os.O_TRUNC|os.O_CREATE, filePermissions)
 			if err != nil {
 				return nil, fmt.Errorf("unable to create file %s: %s", npath, err.Error())
 			}
@@ -182,7 +182,7 @@ func extract(dest string, stream *bytes.Reader) (*Summary, error) {
 			name := path.Base(npath)
 			if strings.ToLower(name) == "index.html" && name != "index.html" {
 				lpath := path.Join(path.Dir(npath), "index.html")
-				log.Debugf("  Copying %s to %s\n", npath, lpath)
+				log.Tracef("Copying %s to %s\n", npath, lpath)
 				copy_file(path.Join(dest, npath), path.Join(dest, lpath))
 			}
 		}

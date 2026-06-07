@@ -9,9 +9,7 @@ import (
 	"path"
 )
 
-const PERMISSIONS = 0644
-
-var log extra.Logger = *extra.NewLogger(extra.DebugLevel)
+const filePermissions = 0644
 
 type Context struct {
 	PageTitle string      // suggested title for the page based on the 'PageType', after substitution
@@ -28,9 +26,10 @@ type MenuItem struct {
 }
 
 func generateIndexPage(context *Context, basePath string, tpath string) error {
+	log := extra.GetDefaultLog()
 	fpath := path.Join(basePath, "index.html")
 
-	output, err := os.OpenFile(fpath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, PERMISSIONS)
+	output, err := os.OpenFile(fpath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, filePermissions)
 	if err != nil {
 		log.Error(err)
 		return err
@@ -40,7 +39,7 @@ func generateIndexPage(context *Context, basePath string, tpath string) error {
 	if len(tpath) > 0 {
 		t, err := template.ParseFiles(tpath)
 		if err == nil {
-			log.Infof("Updating index at '%s' with template '%s'\n", fpath, path.Base(tpath))
+			log.Debugf("Updating index at '%s' with template '%s'\n", fpath, path.Base(tpath))
 			err = t.Execute(output, context)
 			if err != nil {
 				log.Error(err)
@@ -50,7 +49,7 @@ func generateIndexPage(context *Context, basePath string, tpath string) error {
 		log.Warn(err)
 	}
 
-	log.Infof("Updating index at '%s'\n", fpath)
+	log.Debugf("Updating index at '%s'\n", fpath)
 
 	// fallback to a simple HTML page
 	const PAGE_HEADER = `<!DOCTYPE html><html><head><title>%s</title><meta charset="utf-8"></head><body><h1>%s</h1><ul>`
@@ -68,11 +67,12 @@ func generateIndexPage(context *Context, basePath string, tpath string) error {
 }
 
 func generateMetadata(context *Context, basePath string) error {
+	log := extra.GetDefaultLog()
 	data, err := json.Marshal(context.Items)
 
 	fpath := path.Join(basePath, "metadata.json")
-	log.Infof("Writing metadata to '%s'\n", fpath)
-	file, err := os.OpenFile(fpath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, PERMISSIONS)
+	log.Tracef("Writing metadata to '%s'\n", fpath)
+	file, err := os.OpenFile(fpath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, filePermissions)
 	if err != nil {
 		return err
 	}

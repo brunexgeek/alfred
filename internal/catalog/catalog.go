@@ -1,6 +1,7 @@
 package catalog
 
 import (
+	"brunexgeek/alfred/internal/extra"
 	"fmt"
 	"os"
 	"path"
@@ -190,6 +191,9 @@ func isRemoved(entry os.DirEntry, parentDir string) bool {
 }
 
 func (c *Environment) ScanEnvironment(basePath string) {
+	log := extra.GetDefaultLog()
+	now := time.Now()
+
 	// for each product
 	for _, entry := range read_directory(basePath) {
 		product := entry.Name()
@@ -221,12 +225,20 @@ func (c *Environment) ScanEnvironment(basePath string) {
 						continue
 					}
 
+					modified := now
+					info, err := entry.Info()
+					if err != nil {
+						log.Warnf("Unable to retrieve information about '%s'", path.Join(root, entry.Name()))
+					} else {
+						modified = info.ModTime()
+					}
+
 					pub := &Publication{
 						Product:  product,
 						Version:  version,
 						Format:   format,
 						Language: language,
-						Date:     time.Now(),
+						Date:     modified,
 					}
 					c.AddPublication(pub)
 				}
@@ -302,6 +314,7 @@ func (c *Environment) UpdateWebIndices() error {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
+	extra.GetDefaultLog().Infof("Updating indices")
 	return c.updateWebIndex(&c.Root)
 }
 

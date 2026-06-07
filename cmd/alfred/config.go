@@ -14,7 +14,7 @@ import (
 type Config struct {
 	Manager      Manager               `json:"manager"`
 	Environments []*catalog.Parameters `json:"environments"`
-	Location     string
+	LogLevel     string                `json:"logLevel"`
 }
 
 type Manager struct {
@@ -31,7 +31,7 @@ func OpenConfiguration(fpath string) (*Config, error) {
 		}
 	}
 
-	output := &Config{Location: fpath}
+	output := &Config{}
 
 	info, err := os.Stat(fpath)
 	if err != nil {
@@ -107,7 +107,7 @@ func validate_and_return(cpath string, config *Config) (*Config, error) {
 		}
 
 		// validate HTML templates
-		root := path.Dir(config.Location)
+		root := path.Dir(cpath)
 		env.Templates.Products, err = make_absolute(env.Templates.Products, root)
 		if err != nil {
 			return nil, err
