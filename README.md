@@ -93,7 +93,6 @@ It's possible to publish content through the built-in web page `http://<host>:<p
   * **ver**: Semantic version of the product and optional tag. The tag is placed after the version, preceded by a dash (e.g., `1.2.11-mytag`).
   * **fmt**: Content format. Valid values are `html`, `tgz` and `pdf`. If it's `html`, the content of the fuploaded file (must be a `tag.gz`) will be extracted into the directory hierarchy.
   * **lang**: Language code. Valid values are `en`, `es` and `ptr`.
-  * **email**: Poster email.
 
 * **attachment**: File being uploaded. Supported types are `pdf` and `tar.gz`.
 
