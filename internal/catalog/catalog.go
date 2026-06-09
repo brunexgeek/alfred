@@ -76,6 +76,10 @@ func NewEnvironment(params *Parameters) *Environment {
 	}
 }
 
+func IsValidName(name string) bool {
+	return name_re != nil && name_re.MatchString(name)
+}
+
 func (p Publication) Validate() error {
 	if name_re == nil || !name_re.MatchString(p.Product) {
 		return fmt.Errorf("invalid product name")

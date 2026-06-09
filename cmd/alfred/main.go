@@ -1,13 +1,11 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"embed"
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/fs"
 	"mime"
 	"mime/multipart"
 	"net/http"
@@ -34,7 +32,7 @@ const server_version = "Alfred 1.0"
 const PUBLISH_ENDPOINT = "/v1/publish"
 const ENUMERATE_ENDPOINT = "/v1/enumerate"
 const ENVIRONMENTS_ENDPOINT = "/v1/environments"
-const WEB_ENDPOINT = "/"
+const WEB_ENDPOINT = "/web"
 
 var indexPending int32 = 0
 
@@ -56,6 +54,12 @@ func send_object(status int, obj any, w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	return write_json(obj, w)
+}
+
+func send_empty(status int, w http.ResponseWriter) {
+	w.Header().Set("Server", server_version)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
 }
 
 func send_error(status int, message string, w http.ResponseWriter) {
@@ -116,72 +120,76 @@ type PublishRequest struct {
 	Language    string `json:"lang"`
 }
 
+type ResourceReference struct {
+	catalog.Publication
+	Environment string
+}
+
+func parse_resource_ref(r *http.Request) (*ResourceReference, error) {
+	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if len(parts) != 5 {
+		return nil, fmt.Errorf("Invalid resource path")
+	}
+	version, err := catalog.ParseVersion(parts[3])
+	if err != nil {
+		return nil, fmt.Errorf("Invalid version")
+	}
+	if !catalog.IsValidName(parts[0]) {
+		return nil, fmt.Errorf("Invalid environment name")
+	}
+
+	result := ResourceReference{
+		Publication: catalog.Publication{
+			Product:  parts[1],
+			Language: catalog.LanguageCode(parts[2]),
+			Version:  version,
+			Format:   catalog.FormatCode(parts[4]),
+			Date:     time.Now(),
+		},
+		Environment: parts[0],
+	}
+
+	if err := result.Validate(); err != nil {
+		return nil, err
+	}
+
+	return &result, nil
+}
+
 func publish_handler(w http.ResponseWriter, r *http.Request) {
 	log := extra.GetDefaultLog()
-	parts, err := extract_parts(r)
+
+	resource, err := parse_resource_ref(r)
 	if err != nil {
 		send_error(400, err.Error(), w)
 		return
 	}
 
-	var request PublishRequest
-	if entry, ok := parts["params"]; ok {
-		err := json.Unmarshal(entry.Data, &request)
-		if err != nil {
-			send_error(400, "Invalid JSON object at multipart entry named 'params'", w)
-			return
-		}
-	} else {
-		send_error(400, "Missing multipart entry named 'params'", w)
+	if ctype, ok := r.Header["Content-Type"]; !ok || strings.TrimSpace(strings.Join(ctype, "")) != "application/gzip" {
+		send_error(400, "Invalid content type", w)
 		return
 	}
+	attachment := r.Body
 
-	var attachment io.Reader
-	if entry, ok := parts["attachment"]; ok {
-		attachment = bytes.NewReader(entry.Data)
-	} else {
-		send_error(400, "Missing multipart entry named 'params'", w)
-		return
-	}
-
-	cat, ok := environments[request.Environment]
-	if len(request.Environment) == 0 || !ok {
-		send_error(400, "Unkown environment", w)
-		return
-	}
-
-	version, err := catalog.ParseVersion(request.Version)
-	if err != nil {
-		send_error(400, "Invalid semantic version", w)
-		return
-	}
-
-	pub := catalog.Publication{
-		Product:  strings.ToLower(request.Product),
-		Version:  version,
-		Format:   catalog.FormatCode(request.Format),
-		Language: catalog.LanguageCode(request.Language),
-		Date:     time.Now(),
-	}
-
-	if err := pub.Validate(); err != nil {
-		send_error(400, err.Error(), w)
+	env, ok := environments[resource.Environment]
+	if !ok {
+		send_error(404, "Unkown environment", w)
 		return
 	}
 
 	// publish the resource
-	summary, err := publisher.Publish(cat.Parameters.Path, &pub, attachment)
+	summary, err := publisher.Publish(env.Parameters.Path, &resource.Publication, attachment)
 	if err != nil {
 		send_error(400, err.Error(), w)
 		return
 	}
 
 	// update catalog
-	cat.AddPublication(&pub)
+	env.AddPublication(&resource.Publication)
 	// update index pages if an update is not in progress
 	if atomic.CompareAndSwapInt32(&indexPending, 0, 1) {
 		log.Debugf("Trying to update index")
-		err = cat.UpdateWebIndices()
+		err = env.UpdateWebIndices()
 		if err != nil {
 			log.Error(err)
 		}
@@ -194,23 +202,21 @@ func publish_handler(w http.ResponseWriter, r *http.Request) {
 	}
 	result.Count = summary.Count
 	result.Size = summary.Size
-	result.URL = fmt.Sprintf("%s/", pub.DataPath())
+	result.URL = fmt.Sprintf("%s/", resource.DataPath())
 
-	log.Infof("Published %s", pub.DataPath())
+	log.Infof("Published %s", resource.DataPath())
 
 	send_object(http.StatusOK, result, w)
 }
 
-func enumerate_handler(w http.ResponseWriter, r *http.Request) {
-	params := r.URL.Query()
-	cname := params.Get("env")
-	env, ok := environments[cname]
-	if !ok {
-		send_error(400, "Unkown environment", w)
+func remove_handler(w http.ResponseWriter, r *http.Request) {
+	resource, err := parse_resource_ref(r)
+	if err != nil {
+		send_error(400, err.Error(), w)
 		return
 	}
 
-	send_object(200, env, w)
+	send_empty(200, w)
 }
 
 func environment_handler(w http.ResponseWriter, r *http.Request) {
@@ -262,6 +268,18 @@ func load_configuration(cpath string) (*Config, error) {
 	return OpenConfiguration(cpath)
 }
 
+func dispatcher(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPut {
+		publish_handler(w, r)
+		return
+	}
+	if r.Method == http.MethodDelete {
+		remove_handler(w, r)
+		return
+	}
+	send_error(404, "Not found", w)
+}
+
 var environments = make(map[string]*catalog.Environment)
 
 func main() {
@@ -311,15 +329,11 @@ func main() {
 		log.Infof("Initialized environment '%s' at '%s'\n", entry.Name, entry.Path)
 	}
 
-	stripped, _ := fs.Sub(resources, "web")
-
 	// start API
 	address := fmt.Sprintf("%s:%d", config.Manager.Host, config.Manager.Port)
 	mux := http.NewServeMux()
-	mux.HandleFunc(PUBLISH_ENDPOINT, publish_handler)
-	mux.HandleFunc(ENUMERATE_ENDPOINT, enumerate_handler)
-	mux.HandleFunc(ENVIRONMENTS_ENDPOINT, environment_handler)
-	mux.Handle(WEB_ENDPOINT, http.FileServer(http.FS(stripped)))
+	mux.Handle(WEB_ENDPOINT, http.FileServer(http.FS(resources)))
+	mux.HandleFunc("/", dispatcher)
 	server := &http.Server{Addr: address, Handler: mux}
 	go server.ListenAndServe()
 	log.Infof("Manager API listening at http://%s\n", address)
