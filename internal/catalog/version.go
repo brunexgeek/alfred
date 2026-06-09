@@ -15,6 +15,10 @@ type Version struct {
 
 var version_re, _ = regexp.Compile(`^(\d{1,4})\.(\d{1,4})\.(\d{1,4})(?:-([A-Za-z][A-Za-z0-9_-]*))?$`)
 
+func IsValidVersion(value string) bool {
+	return version_re.MatchString(value)
+}
+
 func ParseVersion(value string) (Version, error) {
 	parts := version_re.FindStringSubmatch(value)
 	if parts == nil {

@@ -8,8 +8,10 @@ const (
 	TGZ  FormatCode = "tgz"
 )
 
-const RE_FORMAT = "(" + HTML + "|" + PDF + "|" + TGZ + ")"
-
 func (v FormatCode) IsValid() bool {
 	return v == HTML || v == PDF || v == TGZ
+}
+
+func IsValidFormat(value string) bool {
+	return FormatCode(value).IsValid()
 }

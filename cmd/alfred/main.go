@@ -22,6 +22,8 @@ import (
 	"brunexgeek/alfred/internal/publisher"
 )
 
+const UPLOAD_MIME_TYPE = "application/gzip"
+
 //go:embed web/index.html
 //go:embed web/bootstrap.min.css
 var resources embed.FS
@@ -125,76 +127,93 @@ type ResourceReference struct {
 	Environment string
 }
 
-func parse_resource_ref(r *http.Request) (*ResourceReference, error) {
-	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-	if len(parts) != 5 {
-		return nil, fmt.Errorf("Invalid resource path")
+func parse_resource_ref(path string) ([]string, error) {
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	length := len(parts)
+	if length == 0 {
+		return nil, fmt.Errorf("missing environment name")
 	}
-	version, err := catalog.ParseVersion(parts[3])
-	if err != nil {
-		return nil, fmt.Errorf("Invalid version")
+	if length >= 1 && !catalog.IsValidName(parts[0]) {
+		return nil, fmt.Errorf("invalid environment name")
 	}
-	if !catalog.IsValidName(parts[0]) {
-		return nil, fmt.Errorf("Invalid environment name")
+	if length >= 2 && !catalog.IsValidName(parts[1]) {
+		return nil, fmt.Errorf("invalid product name")
 	}
-
-	result := ResourceReference{
-		Publication: catalog.Publication{
-			Product:  parts[1],
-			Language: catalog.LanguageCode(parts[2]),
-			Version:  version,
-			Format:   catalog.FormatCode(parts[4]),
-			Date:     time.Now(),
-		},
-		Environment: parts[0],
+	if length >= 3 && !catalog.IsValidLanguage(parts[2]) {
+		return nil, fmt.Errorf("invalid language")
 	}
-
-	if err := result.Validate(); err != nil {
-		return nil, err
+	if length >= 4 && !catalog.IsValidVersion(parts[3]) {
+		return nil, fmt.Errorf("invalid version")
+	}
+	if length >= 5 && !catalog.IsValidFormat(parts[4]) {
+		return nil, fmt.Errorf("invalid format")
+	}
+	if length > 5 {
+		return nil, fmt.Errorf("invalid resource name")
 	}
 
-	return &result, nil
+	return parts, nil
+}
+
+func updateIndices(env *catalog.Environment) {
+	log := extra.GetDefaultLog()
+
+	if atomic.CompareAndSwapInt32(&indexPending, 0, 1) {
+		log.Debugf("Trying to update index")
+		err := env.UpdateWebIndices()
+		if err != nil {
+			log.Error(err)
+		}
+		atomic.StoreInt32(&indexPending, 0)
+	}
 }
 
 func publish_handler(w http.ResponseWriter, r *http.Request) {
 	log := extra.GetDefaultLog()
 
-	resource, err := parse_resource_ref(r)
+	// parse and validate the resource path
+	resource, err := parse_resource_ref(r.URL.Path)
 	if err != nil {
 		send_error(400, err.Error(), w)
 		return
 	}
-
-	if ctype, ok := r.Header["Content-Type"]; !ok || strings.TrimSpace(strings.Join(ctype, "")) != "application/gzip" {
-		send_error(400, "Invalid content type", w)
+	if len(resource) != 5 {
+		send_error(400, "incomplete resource name", w)
 		return
 	}
-	attachment := r.Body
 
-	env, ok := environments[resource.Environment]
+	if ctype, ok := r.Header["Content-Type"]; !ok || strings.TrimSpace(strings.Join(ctype, "")) != UPLOAD_MIME_TYPE {
+		send_error(400, fmt.Sprintf("invalid content type; expected '%s'", UPLOAD_MIME_TYPE), w)
+		return
+	}
+	content := r.Body
+
+	version, _ := catalog.ParseVersion(resource[3])
+	pub := catalog.Publication{
+		Product:  resource[1],
+		Language: catalog.LanguageCode(resource[2]),
+		Version:  version,
+		Format:   catalog.FormatCode(resource[4]),
+		Date:     time.Now(),
+	}
+
+	env, ok := environments[resource[0]]
 	if !ok {
-		send_error(404, "Unkown environment", w)
+		send_error(404, "environment not found", w)
 		return
 	}
 
 	// publish the resource
-	summary, err := publisher.Publish(env.Parameters.Path, &resource.Publication, attachment)
+	summary, err := publisher.Publish(env.Parameters.Path, &pub, content)
 	if err != nil {
 		send_error(400, err.Error(), w)
 		return
 	}
 
 	// update catalog
-	env.AddPublication(&resource.Publication)
+	env.AddPublication(&pub)
 	// update index pages if an update is not in progress
-	if atomic.CompareAndSwapInt32(&indexPending, 0, 1) {
-		log.Debugf("Trying to update index")
-		err = env.UpdateWebIndices()
-		if err != nil {
-			log.Error(err)
-		}
-		atomic.StoreInt32(&indexPending, 0)
-	}
+	updateIndices(env)
 
 	var result struct {
 		publisher.Summary
@@ -202,34 +221,37 @@ func publish_handler(w http.ResponseWriter, r *http.Request) {
 	}
 	result.Count = summary.Count
 	result.Size = summary.Size
-	result.URL = fmt.Sprintf("%s/", resource.DataPath())
+	result.URL = fmt.Sprintf("%s/", pub.DataPath())
 
-	log.Infof("Published %s", resource.DataPath())
+	log.Infof("Published %s", pub.DataPath())
 
 	send_object(http.StatusOK, result, w)
 }
 
 func remove_handler(w http.ResponseWriter, r *http.Request) {
-	resource, err := parse_resource_ref(r)
+	log := extra.GetDefaultLog()
+
+	resource, err := parse_resource_ref(r.URL.Path)
 	if err != nil {
 		send_error(400, err.Error(), w)
 		return
 	}
 
+	env, ok := environments[resource[0]]
+	if !ok {
+		send_error(404, "environment not found", w)
+		return
+	}
+	entry, err := env.RemovePublication(resource)
+	if err != nil {
+		send_error(400, err.Error(), w)
+		return
+	}
+	log.Infof("Removed publication '%s'", entry.Path)
+	// update index pages if an update is not in progress
+	updateIndices(env)
+
 	send_empty(200, w)
-}
-
-func environment_handler(w http.ResponseWriter, r *http.Request) {
-	type Result struct {
-		Envs []string `json:"envs"`
-	}
-	result := Result{}
-
-	for key := range environments {
-		result.Envs = append(result.Envs, key)
-	}
-
-	send_object(200, result, w)
 }
 
 var server_done = make(chan int)

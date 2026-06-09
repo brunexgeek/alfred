@@ -251,13 +251,35 @@ func (c *Environment) ScanEnvironment(basePath string) {
 	}
 }
 
-func (c *Environment) ObsoletePublication(path string) error {
+func (c *Environment) RemovePublication(resource []string) (*Entry, error) {
+	if len(resource) < 2 || len(resource) > 5 {
+		return nil, fmt.Errorf("incomplete resource name")
+	}
+
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
-	//parts := strings.Split(path, "/")
+	entry := &c.Root
+	ok := false
+	for i := 1; i < len(resource); i++ {
+		entry, ok = entry.Children[resource[i]]
+		if !ok {
+			return nil, fmt.Errorf("resource not found")
+		}
+	}
 
-	return nil
+	// sanity check
+	if !strings.HasPrefix(entry.Path, c.Parameters.Path) {
+		return nil, fmt.Errorf("resource path inconsistence")
+	}
+	err := os.RemoveAll(entry.Path)
+	if err != nil {
+		return nil, err
+	}
+	delete(entry.Parent.Children, entry.Id)
+	entry.Parent.Tainted = true
+
+	return entry, nil
 }
 
 func (c *Environment) updateWebIndex(entry *Entry) error {

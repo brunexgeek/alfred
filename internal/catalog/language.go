@@ -189,6 +189,11 @@ var codes = map[LanguageCode]string{
 	"unset": "",
 }
 
+func IsValidLanguage(value string) bool {
+	_, ok := codes[LanguageCode(value)]
+	return ok
+}
+
 func ParseLanguageCode(value string) LanguageCode {
 	if _, ok := codes[LanguageCode(value)]; ok {
 		return LanguageCode(value)
