@@ -42,6 +42,27 @@ type ErrorInfo struct {
 	Message string `json:"message"`
 }
 
+type EnvironmentEntry struct {
+	Environment *catalog.Environment
+	Permissions Permissions
+}
+
+var environments = make(map[string]*EnvironmentEntry)
+
+func (env *EnvironmentEntry) CheckPermission(method string) bool {
+	switch method {
+	case http.MethodPut:
+		return env.Permissions.Put
+
+	case http.MethodDelete:
+		return env.Permissions.Delete
+
+	case http.MethodGet:
+		return env.Permissions.Get
+	}
+	return false
+}
+
 func write_json(obj any, w http.ResponseWriter) error {
 	data, err := json.Marshal(obj)
 	if err != nil {
@@ -202,18 +223,22 @@ func publish_handler(w http.ResponseWriter, r *http.Request) {
 		send_error(404, "environment not found", w)
 		return
 	}
+	if !env.CheckPermission(http.MethodPut) {
+		send_error(405, "method not allowed", w)
+		return
+	}
 
 	// publish the resource
-	summary, err := publisher.Publish(env.Parameters.Path, &pub, content)
+	summary, err := publisher.Publish(env.Environment.Parameters.Path, &pub, content)
 	if err != nil {
 		send_error(400, err.Error(), w)
 		return
 	}
 
 	// update catalog
-	env.AddPublication(&pub)
+	env.Environment.AddPublication(&pub)
 	// update index pages if an update is not in progress
-	updateIndices(env)
+	updateIndices(env.Environment)
 
 	var result struct {
 		publisher.Summary
@@ -242,14 +267,19 @@ func remove_handler(w http.ResponseWriter, r *http.Request) {
 		send_error(404, "environment not found", w)
 		return
 	}
-	entry, err := env.DeletePublication(resource)
+	if !env.CheckPermission(http.MethodDelete) {
+		send_error(405, "method not allowed", w)
+		return
+	}
+
+	entry, err := env.Environment.DeletePublication(resource)
 	if err != nil {
 		send_error(400, err.Error(), w)
 		return
 	}
 	log.Infof("Removed publication '%s'", entry.Path)
 	// update index pages if an update is not in progress
-	updateIndices(env)
+	updateIndices(env.Environment)
 
 	send_empty(200, w)
 }
@@ -268,7 +298,12 @@ func metadata_handler(w http.ResponseWriter, r *http.Request) {
 		send_error(404, "environment not found", w)
 		return
 	}
-	content, err := env.GetPublication(resource)
+	if !env.CheckPermission(http.MethodGet) {
+		send_error(405, "method not allowed", w)
+		return
+	}
+
+	content, err := env.Environment.GetPublication(resource)
 	if err != nil {
 		send_error(400, err.Error(), w)
 		return
@@ -333,8 +368,6 @@ func dispatcher(w http.ResponseWriter, r *http.Request) {
 	send_error(405, "method not allowed", w)
 }
 
-var environments = make(map[string]*catalog.Environment)
-
 func main() {
 	install_signal_hook()
 	log := extra.GetDefaultLog()
@@ -362,27 +395,22 @@ func main() {
 	log = extra.NewLogger()
 
 	for _, entry := range config.Environments {
-		environment := catalog.NewEnvironment(entry)
+		environment := catalog.NewEnvironment(&entry.Parameters)
 		if err != nil {
 			log.Error(err)
 			os.Exit(1)
 		}
 		environment.ScanEnvironment(entry.Path)
-		log.Infof("Found environment '%s' at '%s' with %d products\n",
-			environment.Parameters.Name,
-			environment.Parameters.Path,
-			len(environment.Root.Children))
 		err = environment.UpdateWebIndices()
 		if err != nil {
 			log.Error(err)
 			os.Exit(1)
 		}
 
-		environments[entry.Name] = environment
+		environments[entry.Name] = &EnvironmentEntry{Environment: environment, Permissions: entry.Permissions}
 		log.Infof("Initialized environment '%s' at '%s'\n", entry.Name, entry.Path)
 	}
 
-	// start API
 	address := fmt.Sprintf("%s:%d", config.Manager.Host, config.Manager.Port)
 	mux := http.NewServeMux()
 	mux.Handle(WEB_ENDPOINT, http.FileServer(http.FS(resources)))

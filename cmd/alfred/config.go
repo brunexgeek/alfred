@@ -12,14 +12,25 @@ import (
 )
 
 type Config struct {
-	Manager      Manager               `json:"manager"`
-	Environments []*catalog.Parameters `json:"environments"`
-	LogLevel     string                `json:"logLevel"`
+	Manager      Manager        `json:"manager"`
+	Environments []*Environment `json:"environments"`
+	LogLevel     string         `json:"logLevel"`
 }
 
 type Manager struct {
 	Host string `json:"host"`
 	Port int    `json:"port"`
+}
+
+type Environment struct {
+	catalog.Parameters
+	Permissions Permissions `json:"permissions"`
+}
+
+type Permissions struct {
+	Put    bool `json:"put"`
+	Get    bool `json:"get"`
+	Delete bool `json:"delete"`
 }
 
 func OpenConfiguration(fpath string) (*Config, error) {

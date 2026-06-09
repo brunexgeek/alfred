@@ -18,7 +18,7 @@ var name_re, _ = regexp.Compile(`^([a-z][a-z0-9_\-]{0,31})$`)
 type Environment struct {
 	mutex      sync.Mutex
 	Parameters *Parameters
-	Root       Entry
+	root       Entry
 }
 
 type Parameters struct {
@@ -26,13 +26,6 @@ type Parameters struct {
 	Path      string            `json:"path"`
 	Templates Templates         `json:"templates"`
 	Strings   map[string]string `json:"strings"`
-	Features  FeatureFlags      `json:"features"`
-}
-
-type FeatureFlags struct {
-	Put    bool `json:"put"`
-	Get    bool `json:"get"`
-	Delete bool `json:"delete"`
 }
 
 type Templates struct {
@@ -74,7 +67,7 @@ type Publication struct {
 func NewEnvironment(params *Parameters) *Environment {
 	return &Environment{
 		Parameters: params,
-		Root: Entry{
+		root: Entry{
 			Path:     params.Path,
 			Children: make(map[string]*Entry),
 			Type:     TypeEnvironment,
@@ -127,10 +120,6 @@ func (c *Environment) AddPublication(pub *Publication) error {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
-	if !c.Parameters.Features.Put {
-		return fmt.Errorf("method not allowed")
-	}
-
 	err := pub.Validate()
 	if err != nil {
 		return err
@@ -141,7 +130,7 @@ func (c *Environment) AddPublication(pub *Publication) error {
 	var language *Entry
 	var version *Entry
 
-	if product, ok = c.Root.Children[pub.Product]; !ok {
+	if product, ok = c.root.Children[pub.Product]; !ok {
 		title := c.Parameters.Translate(pub.Product)
 		product = &Entry{
 			Id:         pub.Product,
@@ -149,7 +138,7 @@ func (c *Environment) AddPublication(pub *Publication) error {
 			Title:      title,
 			Type:       TypeProduct,
 		}
-		c.Root.AppendChild(product)
+		c.root.AppendChild(product)
 	}
 
 	if language, ok = product.Children[string(pub.Language)]; !ok {
@@ -270,11 +259,7 @@ func (c *Environment) DeletePublication(resource []string) (*Entry, error) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
-	if !c.Parameters.Features.Delete {
-		return nil, fmt.Errorf("method not allowed")
-	}
-
-	entry := &c.Root
+	entry := &c.root
 	ok := false
 	for i := 1; i < len(resource); i++ {
 		entry, ok = entry.Children[resource[i]]
@@ -308,11 +293,7 @@ func (c *Environment) GetPublication(resource []string) ([]byte, error) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
-	if !c.Parameters.Features.Get {
-		return nil, fmt.Errorf("method not allowed")
-	}
-
-	entry := &c.Root
+	entry := &c.root
 	ok := false
 	for i := 1; i < len(resource); i++ {
 		entry, ok = entry.Children[resource[i]]
@@ -397,7 +378,7 @@ func (c *Environment) UpdateWebIndices() error {
 	defer c.mutex.Unlock()
 
 	extra.GetDefaultLog().Infof("Updating indices")
-	return c.updateWebIndex(&c.Root)
+	return c.updateWebIndex(&c.root)
 }
 
 func (p *Parameters) Translate(expr string) string {
