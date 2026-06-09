@@ -26,6 +26,13 @@ type Parameters struct {
 	Path      string            `json:"path"`
 	Templates Templates         `json:"templates"`
 	Strings   map[string]string `json:"strings"`
+	Features  FeatureFlags      `json:"features"`
+}
+
+type FeatureFlags struct {
+	Put    bool `json:"put"`
+	Get    bool `json:"get"`
+	Delete bool `json:"delete"`
 }
 
 type Templates struct {
@@ -119,6 +126,10 @@ func (e *Entry) AppendChild(item *Entry) {
 func (c *Environment) AddPublication(pub *Publication) error {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
+
+	if !c.Parameters.Features.Put {
+		return fmt.Errorf("method not allowed")
+	}
 
 	err := pub.Validate()
 	if err != nil {
@@ -251,13 +262,17 @@ func (c *Environment) ScanEnvironment(basePath string) {
 	}
 }
 
-func (c *Environment) RemovePublication(resource []string) (*Entry, error) {
+func (c *Environment) DeletePublication(resource []string) (*Entry, error) {
 	if len(resource) < 2 || len(resource) > 5 {
 		return nil, fmt.Errorf("incomplete resource name")
 	}
 
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
+
+	if !c.Parameters.Features.Delete {
+		return nil, fmt.Errorf("method not allowed")
+	}
 
 	entry := &c.Root
 	ok := false
@@ -280,6 +295,47 @@ func (c *Environment) RemovePublication(resource []string) (*Entry, error) {
 	entry.Parent.Tainted = true
 
 	return entry, nil
+}
+
+func (c *Environment) GetPublication(resource []string) ([]byte, error) {
+	if len(resource) < 1 || len(resource) > 5 {
+		return nil, fmt.Errorf("incomplete resource name")
+	}
+	if len(resource) > 4 {
+		return nil, fmt.Errorf("information not available")
+	}
+
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	if !c.Parameters.Features.Get {
+		return nil, fmt.Errorf("method not allowed")
+	}
+
+	entry := &c.Root
+	ok := false
+	for i := 1; i < len(resource); i++ {
+		entry, ok = entry.Children[resource[i]]
+		if !ok {
+			return nil, fmt.Errorf("resource not found")
+		}
+	}
+
+	// sanity check
+	if !strings.HasPrefix(entry.Path, c.Parameters.Path) {
+		return nil, fmt.Errorf("resource path inconsistence")
+	}
+
+	input, err := os.OpenFile(path.Join(entry.Path, "metadata.json"), os.O_RDONLY, filePermissions)
+	if err != nil {
+		return nil, err
+	}
+	content, err := extra.ReadAll(input, 32*1024)
+	if err != nil {
+		return nil, err
+	}
+
+	return content, nil
 }
 
 func (c *Environment) updateWebIndex(entry *Entry) error {

@@ -60,7 +60,7 @@ func send_object(status int, obj any, w http.ResponseWriter) error {
 
 func send_empty(status int, w http.ResponseWriter) {
 	w.Header().Set("Server", server_version)
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Add("Content-Length", "0")
 	w.WriteHeader(status)
 }
 
@@ -242,7 +242,7 @@ func remove_handler(w http.ResponseWriter, r *http.Request) {
 		send_error(404, "environment not found", w)
 		return
 	}
-	entry, err := env.RemovePublication(resource)
+	entry, err := env.DeletePublication(resource)
 	if err != nil {
 		send_error(400, err.Error(), w)
 		return
@@ -252,6 +252,33 @@ func remove_handler(w http.ResponseWriter, r *http.Request) {
 	updateIndices(env)
 
 	send_empty(200, w)
+}
+
+func metadata_handler(w http.ResponseWriter, r *http.Request) {
+	log := extra.GetDefaultLog()
+
+	resource, err := parse_resource_ref(r.URL.Path)
+	if err != nil {
+		send_error(400, err.Error(), w)
+		return
+	}
+
+	env, ok := environments[resource[0]]
+	if !ok {
+		send_error(404, "environment not found", w)
+		return
+	}
+	content, err := env.GetPublication(resource)
+	if err != nil {
+		send_error(400, err.Error(), w)
+		return
+	}
+	log.Infof("Retrieved publication '%s'", r.URL.Path)
+
+	w.Header().Set("Server", server_version)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	w.Write(content)
 }
 
 var server_done = make(chan int)
@@ -299,7 +326,11 @@ func dispatcher(w http.ResponseWriter, r *http.Request) {
 		remove_handler(w, r)
 		return
 	}
-	send_error(404, "Not found", w)
+	if r.Method == http.MethodGet {
+		metadata_handler(w, r)
+		return
+	}
+	send_error(405, "method not allowed", w)
 }
 
 var environments = make(map[string]*catalog.Environment)

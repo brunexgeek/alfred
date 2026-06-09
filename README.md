@@ -38,6 +38,11 @@ A minimal configuration looks like the following:
         {
             "name": "production",
             "path": "/tmp/prod",
+            "features": {
+              "get": true,
+              "put": true,
+              "delete": false
+            }
         }
     ]
 }
@@ -82,24 +87,75 @@ To run using Docker, use something like the following. Keep in mind that you nee
 docker run --rm -v ~/docs/env1:/docs/env -v ~/config.json:/opt/config.json brunexgeek/alfred:0.1.0
 ```
 
-## Publishing content
+## Content management
 
-It's possible to publish content through the built-in web page `http://<host>:<port>/`, where host and port are the values specified in the `manager` entry in the configuration file. This address also serves the REST endpoint `http://<host>:<port>/v1/publish`. The endpoint uploads metadata and a file attachment to Alfred, and expects a `multipart/form-data` request with two fields:
+It's possible to publish content through the built-in web page `http://<host>:<port>/web/`, where host and port are the values specified in the `manager` entry in the configuration file.
 
-* **params**: JSON object containing metadata of the content being published:
+This address also serves the REST endpoints to manage documentations. Each part of the resource path used in these endpoints have specific requirements:
 
-  * **env**: Target environment, as defined in the configuration file.
-  * **prod**: Product identifier. A new directory hierarchy will be created if the product do not exists yet.
-  * **ver**: Semantic version of the product and optional tag. The tag is placed after the version, preceded by a dash (e.g., `1.2.11-mytag`).
-  * **fmt**: Content format. Valid values are `html`, `tgz` and `pdf`. If it's `html`, the content of the fuploaded file (must be a `tag.gz`) will be extracted into the directory hierarchy.
-  * **lang**: Language code. Valid values are `en`, `es` and `ptr`.
+```
+/<environment>/<product>/<language>/<version>/<format>
+```
 
-* **attachment**: File being uploaded. Supported types are `pdf` and `tar.gz`.
+* **environment**: Target environment, as defined in the configuration file.
+* **product**: Product identifier. A new directory hierarchy will be created if the product do not exists yet.
+* **language**: Language code. Valid values are `en`, `es` and `ptr`.
+* **version**: Semantic version of the product and optional tag. The tag is placed after the version, preceded by a dash (e.g., `1.2.11-mytag`).
+* **format**: Content format. Valid values are `html`, `tgz` and `pdf`. If it's `html`, the content of the fuploaded file (must be a `tag.gz`) will be extracted into the directory hierarchy.
+
+### Retrieve metadata
+
+```
+GET /<environment>
+GET /<environment>/<product>
+GET /<environment>/<product>/<language>
+GET /<environment>/<product>/<language>/<version>
+```
+
+Retrieves metadata information about a resource. It's returned the content of the `metadata.json` file of the corresponding level. At least the environment must be provided. This endpoint is available only if `features.get` in the corresponding environment is `true`.
 
 Example:
 
-```bash
-curl -v -X POST -F "params={\"env\":\"production\",\"prod\":\"my-product\",\"ver\":\"1.2.11\",\"fmt\":\"html\",\"lang\":\"en\",\"email\":\"admin@example.com\"}" -F attachment=@package.tar.gz "http://127.0.0.1:7000/v1/publish"
+```shell
+# retrieve metadata about versions of the product tifa in japanese
+curl -X DELETE 127.0.0.1:7000/production/tifa/jp
+# retrieve metadata about languages of the product 'yuffie'
+curl -X DELETE 127.0.0.1:7000/production/yuffie/
+```
+
+### Publish documentation
+
+```
+PUT /<environment>/<product>/<language>/<version>/<format>
+```
+
+Publish a documentation in the specified resource. The full resource path must be provided. The body of the request must contain the file being uploaded; supported types are `pdf` and `tar.gz`. This endpoint is available only if `features.put` in the corresponding environment is `true`.
+
+Example:
+
+```shell
+# add Portuguese HTML content for product lulu, version 1.2.1
+curl -X PUT 127.0.0.1:7000/production/lulu/pt/1.2.1/html -H 'Content-Type: application/gzip' --data-binary  @package.tar.gz
+```
+
+### Delete documentation
+
+```
+DELETE /<environment>/<product>
+DELETE /<environment>/<product>/<language>
+DELETE /<environment>/<product>/<language>/<version>
+DELETE /<environment>/<product>/<language>/<version>/<format>
+```
+
+Published a documentation in the specified resource. At least the environment and the product must be provided. This endpoint is available only if `features.delete` in the corresponding environment is `true`.
+
+Example:
+
+```shell
+# remove all versions of the product fran in japanese
+curl -X DELETE 127.0.0.1:7000/production/fran/jp
+# remove everything under the product 'ashelia'
+curl -X DELETE 127.0.0.1:7000/production/ashelia/en/1.1.2
 ```
 
 ## License
