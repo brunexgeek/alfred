@@ -23,6 +23,7 @@ import (
 )
 
 const UPLOAD_MIME_TYPE = "application/gzip"
+const REMOTE_USER = "X-Remote-User"
 
 //go:embed web/index.html
 //go:embed web/bootstrap.min.css
@@ -45,22 +46,40 @@ type ErrorInfo struct {
 type EnvironmentEntry struct {
 	Environment *catalog.Environment
 	Permissions Permissions
+	Users       map[string]Permissions
 }
 
 var environments = make(map[string]*EnvironmentEntry)
 
-func (env *EnvironmentEntry) CheckPermission(method string) bool {
+func (env *EnvironmentEntry) CheckPermission(user string, method string) error {
+	// ignore users whose name are invalid/unsafe
+	if len(user) > 0 && !catalog.IsValidName(user) {
+		return fmt.Errorf("invalid user name")
+	}
+
+	source := &env.Permissions
+	if len(user) > 0 {
+		perms, ok := env.Users[user]
+		if !ok {
+			source = &perms
+		}
+	}
+
+	result := false
 	switch method {
 	case http.MethodPut:
-		return env.Permissions.Put
+		result = source.Put
 
 	case http.MethodDelete:
-		return env.Permissions.Delete
+		result = source.Delete
 
 	case http.MethodGet:
-		return env.Permissions.Get
+		result = source.Get
 	}
-	return false
+	if !result {
+		return fmt.Errorf("forbidden")
+	}
+	return nil
 }
 
 func write_json(obj any, w http.ResponseWriter) error {
@@ -203,7 +222,7 @@ func publish_handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if ctype, ok := r.Header["Content-Type"]; !ok || strings.TrimSpace(strings.Join(ctype, "")) != UPLOAD_MIME_TYPE {
+	if strings.ToLower(r.Header.Get("Content-Type")) != UPLOAD_MIME_TYPE {
 		send_error(400, fmt.Sprintf("invalid content type; expected '%s'", UPLOAD_MIME_TYPE), w)
 		return
 	}
@@ -223,8 +242,8 @@ func publish_handler(w http.ResponseWriter, r *http.Request) {
 		send_error(404, "environment not found", w)
 		return
 	}
-	if !env.CheckPermission(http.MethodPut) {
-		send_error(405, "method not allowed", w)
+	if err := env.CheckPermission(r.Header.Get(REMOTE_USER), http.MethodPut); err != nil {
+		send_error(403, err.Error(), w)
 		return
 	}
 
@@ -267,8 +286,8 @@ func remove_handler(w http.ResponseWriter, r *http.Request) {
 		send_error(404, "environment not found", w)
 		return
 	}
-	if !env.CheckPermission(http.MethodDelete) {
-		send_error(405, "method not allowed", w)
+	if err := env.CheckPermission(r.Header.Get(REMOTE_USER), http.MethodDelete); err != nil {
+		send_error(403, err.Error(), w)
 		return
 	}
 
@@ -298,8 +317,8 @@ func metadata_handler(w http.ResponseWriter, r *http.Request) {
 		send_error(404, "environment not found", w)
 		return
 	}
-	if !env.CheckPermission(http.MethodGet) {
-		send_error(405, "method not allowed", w)
+	if err := env.CheckPermission(r.Header.Get(REMOTE_USER), http.MethodGet); err != nil {
+		send_error(403, err.Error(), w)
 		return
 	}
 

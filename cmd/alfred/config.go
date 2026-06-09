@@ -24,7 +24,8 @@ type Manager struct {
 
 type Environment struct {
 	catalog.Parameters
-	Permissions Permissions `json:"permissions"`
+	Users       map[string]Permissions `json:"users"`
+	Permissions Permissions            `json:"permissions"`
 }
 
 type Permissions struct {

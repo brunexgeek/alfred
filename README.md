@@ -38,7 +38,7 @@ A minimal configuration looks like the following:
         {
             "name": "production",
             "path": "/tmp/prod",
-            "features": {
+            "permissions": {
               "get": true,
               "put": true,
               "delete": false
@@ -56,6 +56,8 @@ Environments have the following fields:
 * **path:** Path to the directory where the environment content should be stored. Prefer absolute paths and make sure the user used to run Alfred have write permissions on it.
 * **templates:** Optional map of templates to be used for each index page. The valid entries are: `products`, `languages`, `versions` and `formats`. Templates are written using [Go template syntax](https://pkg.go.dev/html/template). Check the directory `templates` in the source repository for some examples.
 * **strings:** Optional map of substitutions. Alfred will try to populate the template context with values using this map. You can also get substitutions manually by calling `.Strings.Get` in the template context. This map is useful to replace a product ID (e.g., `my-product`) to its marketing name (.e.g, `My Super Product Plus`), specially because product IDs have a limited set of allowed characters.
+* **permissions**: Optional object defining what operations can be performed by unauthenticated users. The object can have the boolean fields `get`, `put` and `delete`. Any omitted fields defaults to `false`.
+* **users**: Optional map whose keys are usernames and whose values are objects with boolean fields `get`, `put` and `delete`. Any omited fields defaults to `false`. If an authenticated user is not present in this map, the permissions defined for unauthenticated users (the `permissions` field above) will be used. The username is obtained from the `X-Remote-User` HTTP header, which must be set by a proxy (e.g., nginx).
 
 ## Building
 
