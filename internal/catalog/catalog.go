@@ -38,30 +38,30 @@ type Templates struct {
 type EntryType string
 
 const (
-	TypeEnvironment EntryType = "TypeEnvironment"
-	TypeProduct     EntryType = "TypeProduct"
-	TypeLanguage    EntryType = "TypeLanguage"
-	TypeVersion     EntryType = "TypeVersion"
-	TypeFormat      EntryType = "TypeFormat"
+	TypeEnvironment EntryType = "environment"
+	TypeProduct     EntryType = "product"
+	TypeLanguage    EntryType = "language"
+	TypeVersion     EntryType = "version"
+	TypeFormat      EntryType = "format"
 )
 
 type Entry struct {
-	Parent     *Entry
-	Id         string // original ID
-	SortableId string // normalized ID to enable sorting
-	Title      string // ID after substitutions or custom title
-	Path       string // absolute path to this entry in the disk
-	Children   map[string]*Entry
-	Tainted    bool // was this entry changed since last index generation?
-	Type       EntryType
+	Parent   *Entry
+	Id       string // original ID
+	NormalId string // normalized ID for sorting
+	Title    string // ID after substitutions or custom title
+	Path     string // absolute path to this entry in the disk
+	Children map[string]*Entry
+	Tainted  bool // was this entry changed since last index generation?
+	Type     EntryType
 }
 
 type Publication struct {
-	Product  string       `json:"prod"` // unique product name (lowercase)
-	Version  Version      `json:"ver"`  // complete semantic version
-	Format   FormatCode   `json:"fmt"`
-	Language LanguageCode `json:"lang"`
-	Date     time.Time    `json:"date"`
+	Product  string  // unique product name (lowercase)
+	Version  Version // complete semantic version
+	Format   FormatCode
+	Language LanguageCode
+	Date     time.Time
 }
 
 func NewEnvironment(params *Parameters) *Environment {
@@ -106,8 +106,8 @@ func (e *Entry) AppendChild(item *Entry) {
 	if item.Children == nil {
 		item.Children = make(map[string]*Entry, 0)
 	}
-	if item.SortableId == "" {
-		item.SortableId = item.Id
+	if item.NormalId == "" {
+		item.NormalId = item.Id
 	}
 	if item.Title == "" {
 		item.Title = item.Id
@@ -133,10 +133,10 @@ func (c *Environment) AddPublication(pub *Publication) error {
 	if product, ok = c.root.Children[pub.Product]; !ok {
 		title := c.Parameters.Translate(pub.Product)
 		product = &Entry{
-			Id:         pub.Product,
-			SortableId: strings.ToLower(title),
-			Title:      title,
-			Type:       TypeProduct,
+			Id:       pub.Product,
+			NormalId: strings.ToLower(title),
+			Title:    title,
+			Type:     TypeProduct,
 		}
 		c.root.AppendChild(product)
 	}
@@ -148,30 +148,30 @@ func (c *Environment) AddPublication(pub *Publication) error {
 			title = pub.Language.GetName()
 		}
 		language = &Entry{
-			Id:         string(pub.Language),
-			SortableId: strings.ToLower(title),
-			Title:      title,
-			Type:       TypeLanguage,
+			Id:       string(pub.Language),
+			NormalId: strings.ToLower(title),
+			Title:    title,
+			Type:     TypeLanguage,
 		}
 		product.AppendChild(language)
 	}
 
 	if version, ok = language.Children[pub.Version.ToString()]; !ok {
 		version = &Entry{
-			Id:         pub.Version.ToString(),
-			SortableId: pub.Version.ToSortableString(),
-			Title:      pub.Version.ToString(),
-			Type:       TypeVersion,
+			Id:       pub.Version.ToString(),
+			NormalId: pub.Version.ToSortableString(),
+			Title:    pub.Version.ToString(),
+			Type:     TypeVersion,
 		}
 		language.AppendChild(version)
 	}
 
 	if _, ok = version.Children[string(pub.Format)]; !ok {
 		format := &Entry{
-			Id:         string(pub.Format),
-			SortableId: string(pub.Format),
-			Title:      c.Parameters.Translate(string(pub.Format)),
-			Type:       TypeFormat,
+			Id:       string(pub.Format),
+			NormalId: string(pub.Format),
+			Title:    c.Parameters.Translate(string(pub.Format)),
+			Type:     TypeFormat,
 		}
 		version.AppendChild(format)
 	}
@@ -324,20 +324,20 @@ func (c *Environment) updateWebIndex(entry *Entry) error {
 		items := make([]*MenuItem, 0, len(entry.Children))
 		for _, child := range entry.Children {
 			items = append(items, &MenuItem{
-				Id:         child.Id,
-				Title:      child.Title,
-				SortableId: child.SortableId,
-				Type:       string(child.Type),
+				Id:       child.Id,
+				Title:    child.Title,
+				NormalId: child.NormalId,
+				Type:     string(child.Type),
 			})
 		}
 		// sort products in ascending order
 		slices.SortStableFunc(items, func(a, b *MenuItem) int {
-			return strings.Compare(a.SortableId, b.SortableId)
+			return strings.Compare(a.NormalId, b.NormalId)
 		})
 
 		context := Context{
 			Items:     items,
-			PageTitle: c.Parameters.Translate(string(entry.Type)),
+			PageTitle: c.Parameters.Translate("page_" + string(entry.Type)),
 			PageType:  string(entry.Type),
 			Strings:   StringMap{&c.Parameters.Strings},
 		}

@@ -145,8 +145,9 @@ func validate_and_return(cpath string, config *Config) (*Config, error) {
 			catalog.TypeVersion:     "Formats",
 		}
 		for key, value := range names {
-			if _, ok := env.Strings[string(key)]; !ok {
-				env.Strings[string(key)] = value
+			id := "page_" + string(key)
+			if _, ok := env.Strings[id]; !ok {
+				env.Strings[id] = value
 			}
 		}
 	}

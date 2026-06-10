@@ -12,17 +12,17 @@ import (
 const filePermissions = 0644
 
 type Context struct {
-	PageTitle string      // suggested title for the page based on the 'PageType', after substitution
-	PageType  string      // page type; possible values are 'TypeEnvironment', 'TypeProduct', 'TypeLanguage' and 'TypeVersion'
+	PageTitle string      // suggested title for the page based on the page type, after substitution
+	PageType  string      // page type; possible values are 'environment', 'product', 'language' and 'version'
 	Strings   StringMap   // object to perform substitutions; uses values from 'environment.strings'
 	Items     []*MenuItem // array of items in this level
 }
 
 type MenuItem struct {
-	Id         string // unique ID
-	SortableId string // normalized ID to enable sorting
-	Title      string // same as 'Id' or substitution
-	Type       string // item type; possible values are 'TypeProduct', 'TypeLanguage', 'TypeVersion' and 'TypeFormat'
+	Id       string `json:"id"`    // unique ID
+	NormalId string `json:"nid"`   // normalized ID used for sorting
+	Title    string `json:"title"` // same as 'Id' or substitution
+	Type     string `json:"type"`  // item type; possible values are 'product', 'language', 'version' and 'format'
 }
 
 func generateIndexPage(context *Context, basePath string, tpath string) error {
