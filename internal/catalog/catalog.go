@@ -319,24 +319,43 @@ func (c *Environment) GetPublication(resource []string) ([]byte, error) {
 	return content, nil
 }
 
+func treefy(entry *Entry, prevPath string, prevNormalPath string) *MenuItem {
+	var childPath string
+	var childNormalPath string
+
+	root := &MenuItem{
+		Path:       prevPath,
+		NormalPath: prevNormalPath,
+		Title:      entry.Title,
+		Type:       string(entry.Type),
+		Children:   make([]*MenuItem, 0, len(entry.Children)),
+	}
+	for _, child := range entry.Children {
+		if prevPath != "" {
+			childPath = fmt.Sprintf("%s/%s", prevPath, child.Id)
+			childNormalPath = fmt.Sprintf("%s/%s", prevNormalPath, child.NormalId)
+		} else {
+			childPath = child.Id
+			childNormalPath = child.NormalId
+		}
+		root.Children = append(root.Children, treefy(child, childPath, childNormalPath))
+	}
+	// sort in ascending order
+	slices.SortStableFunc(root.Children, func(a, b *MenuItem) int {
+		return strings.Compare(a.NormalPath, b.NormalPath)
+	})
+	return root
+}
+
+func generateTreeItems(entry *Entry) []*MenuItem {
+	items := treefy(entry, "", "").Children
+	return items
+}
+
 func (c *Environment) updateWebIndex(entry *Entry) error {
 	if entry.Tainted {
-		items := make([]*MenuItem, 0, len(entry.Children))
-		for _, child := range entry.Children {
-			items = append(items, &MenuItem{
-				Id:       child.Id,
-				Title:    child.Title,
-				NormalId: child.NormalId,
-				Type:     string(child.Type),
-			})
-		}
-		// sort products in ascending order
-		slices.SortStableFunc(items, func(a, b *MenuItem) int {
-			return strings.Compare(a.NormalId, b.NormalId)
-		})
-
 		context := Context{
-			Items:     items,
+			Items:     generateTreeItems(entry),
 			PageTitle: c.Parameters.Translate("page_" + string(entry.Type)),
 			PageType:  string(entry.Type),
 			Strings:   StringMap{&c.Parameters.Strings},

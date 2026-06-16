@@ -14,7 +14,7 @@ import (
 )
 
 const MAX_PAYLOAD = 25 * 1024 * 1024
-const directoryPermissions = 0744
+const directoryPermissions = 0755
 const filePermissions = 0644
 
 type Publisher struct {
@@ -159,7 +159,7 @@ func extract(dest string, stream *bytes.Reader) (*Summary, error) {
 
 		if header.Typeflag == tar.TypeDir {
 			target := path.Join(dest, npath)
-			if err := os.Mkdir(target, directoryPermissions); err != nil {
+			if err := os.MkdirAll(target, directoryPermissions); err != nil {
 				return nil, fmt.Errorf("unable to create directory '%s': %s", target, err.Error())
 			}
 		} else {

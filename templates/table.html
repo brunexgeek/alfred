@@ -1,0 +1,85 @@
+<!--
+
+The page context (top level '.' or '$.') is an 'catalog.Context' object:
+
+type Context struct {
+    PageTitle string      // suggested title for the page based on the page type, after substitution
+    PageType  string      // page type; possible values are 'environment', 'product', 'language' and 'version'
+    Strings   StringMap   // object to perform substitutions; uses values from 'environment.strings'
+    Items     []*MenuItem // array of items in this level
+}
+
+type MenuItem struct {
+	Path     string // unique ID
+	NormalId string // normalized ID for sorting
+	Title    string // same as 'Path' or substitution
+	Type     string // item type; possible values are 'product', 'language', 'version' and 'format'
+    Children []*MenuItem // array of children nodes
+}
+
+-->
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>{{ .PageTitle }}</title>
+    <style>
+        table {
+            border-collapse: collapse;
+        }
+        tr:first-child td, tr:first-child th {
+            border-top: 1px solid black;
+        }
+        td, th {
+            border-bottom: 1px solid black;
+            padding: 0;
+        }
+        td a {
+            padding: .5em;
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <h1>{{ .PageTitle }}</h1>
+    <table>
+        <tbody>
+            {{ range $A := .Items }}
+                {{ if $A.Children }}
+                    {{ range $B := $A.Children }}
+                        {{ if $B.Children }}
+                            {{ range $C := $B.Children }}
+                                {{ if $C.Children }}
+                                    {{ range $D := $C.Children }}
+                                        <tr>
+                                            {{ if $A.Title }}<td><a href="{{ $A.Path }}">{{$A.Title}}</a></td>{{ end }}
+                                            {{ if $B.Title }}<td><a href="{{ $B.Path }}">{{$B.Title}}</a></td>{{ end }}
+                                            {{ if $C.Title }}<td><a href="{{ $C.Path }}">{{$C.Title}}</a></td>{{ end }}
+                                            {{ if $D.Title }}<td><a href="{{ $D.Path }}">{{$D.Title}}</a></td>{{ end }}
+                                        </tr>
+                                    {{ end }}
+                                {{ else }}
+                                    <tr>
+                                        {{ if $A.Title }}<td><a href="{{ $A.Path }}">{{$A.Title}}</a></td>{{ end }}
+                                        {{ if $B.Title }}<td><a href="{{ $B.Path }}">{{$B.Title}}</a></td>{{ end }}
+                                        {{ if $C.Title }}<td><a href="{{ $C.Path }}">{{$C.Title}}</a></td>{{ end }}
+                                    </tr>
+                                {{ end }}
+                            {{ end }}
+                        {{ else }}
+                            <tr>
+                                {{ if $A.Title }}<td><a href="{{ $A.Path }}">{{$A.Title}}</a></td>{{ end }}
+                                {{ if $B.Title }}<td><a href="{{ $B.Path }}">{{$B.Title}}</a></td>{{ end }}
+                            </tr>
+                        {{ end }}
+                    {{ end }}
+                {{ else }}
+                    <tr>
+                        {{ if $A.Title }}<td><a href="{{ $A.Path }}">{{$A.Title}}</a></td>{{ end }}
+                    </tr>
+                {{ end }}
+            {{ end }}
+        </tbody>
+    </table>
+</body>
+</html>

@@ -36,14 +36,37 @@ type MenuItem struct {
         }
     </style>
 </head>
+
 <body class="page-{{ .PageType }}">
     <h1>{{ .PageTitle }}</h1>
     <ul>
         {{- range .Items }}
-            <li>
-                <a href='{{ .Path }}' class="item-{{ .Type }}">{{ .Path }}</a>
-            </li>
+        <li>
+            <a href='{{ .Path }}' class="item-{{ .Type }}">{{ .Title }}</a>
+            <ul>
+                {{- range .Children }}
+                <li>
+                    <a href='{{ .Path }}' class="item-{{ .Type }}">{{ .Title }}</a>
+                    <ul>
+                        {{- range .Children }}
+                        <li>
+                            <a href='{{ .Path }}' class="item-{{ .Type }}">{{ .Title }}</a>
+                            <ul>
+                                {{- range .Children }}
+                                <li>
+                                    <a href='{{ .Path }}' class="item-{{ .Type }}">{{ .Title }}</a>
+                                </li>
+                                {{- end}}
+                            </ul>
+                        </li>
+                        {{- end}}
+                    </ul>
+                </li>
+                {{- end}}
+            </ul>
+        </li>
         {{- end}}
     </ul>
 </body>
+
 </html>

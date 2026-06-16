@@ -15,14 +15,15 @@ type Context struct {
 	PageTitle string      // suggested title for the page based on the page type, after substitution
 	PageType  string      // page type; possible values are 'environment', 'product', 'language' and 'version'
 	Strings   StringMap   // object to perform substitutions; uses values from 'environment.strings'
-	Items     []*MenuItem // array of items in this level
+	Items     []*MenuItem // array of items
 }
 
 type MenuItem struct {
-	Id       string `json:"id"`    // unique ID
-	NormalId string `json:"nid"`   // normalized ID used for sorting
-	Title    string `json:"title"` // same as 'Id' or substitution
-	Type     string `json:"type"`  // item type; possible values are 'product', 'language', 'version' and 'format'
+	Path       string      `json:"id"`    // unique ID
+	NormalPath string      `json:"nid"`   // normalized ID used for sorting
+	Title      string      `json:"title"` // same as 'Id' or substitution
+	Type       string      `json:"type"`  // item type; possible values are 'product', 'language', 'version' and 'format'
+	Children   []*MenuItem `json:"-"`     // array of children nodes
 }
 
 func generateIndexPage(context *Context, basePath string, tpath string) error {
@@ -57,7 +58,7 @@ func generateIndexPage(context *Context, basePath string, tpath string) error {
 
 	for _, item := range context.Items {
 		const PAGE_ITEM = "<li><a href='%s'>%s</a></li>"
-		output.WriteString(fmt.Sprintf(PAGE_ITEM, item.Id, item.Title))
+		output.WriteString(fmt.Sprintf(PAGE_ITEM, item.Path, item.Title))
 	}
 
 	const PAGE_FOOTER = `</ul></body></html>`
