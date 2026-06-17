@@ -4,7 +4,6 @@ import (
 	"archive/tar"
 	"brunexgeek/alfred/internal/catalog"
 	"brunexgeek/alfred/internal/extra"
-	"bytes"
 	"compress/gzip"
 	"fmt"
 	"io"
@@ -13,7 +12,6 @@ import (
 	"strings"
 )
 
-const MAX_PAYLOAD = 25 * 1024 * 1024
 const directoryPermissions = 0755
 const filePermissions = 0644
 
@@ -42,11 +40,7 @@ func Publish(root string, pub *catalog.Publication, input io.Reader) (*Summary, 
 	// for 'html' we have to inflate the input gzip stream and
 	// extract files of the resulting tar package
 	if pub.Format == catalog.HTML {
-		ustream, err := inflate(input)
-		if err != nil {
-			return nil, err
-		}
-		summary, err = extract(data_path, ustream)
+		summary, err = extract(data_path, input)
 		if err != nil {
 			return nil, err
 		}
@@ -87,116 +81,115 @@ func save_file(fpath string, input io.Reader) (*Summary, error) {
 	return &Summary{Count: 1, Size: size}, nil
 }
 
-// Inflate gzip content to memory
-func inflate(gzstream io.Reader) (*bytes.Reader, error) {
-	stream, err := gzip.NewReader(gzstream)
-	if err != nil {
-		return nil, fmt.Errorf("unable to open gzip stream %s", err.Error())
-	}
-
-	data, err := extra.ReadAll(stream, MAX_PAYLOAD)
-	if err != nil {
-		return nil, err
-	}
-
-	return bytes.NewReader(data), nil
-}
-
 // Validate a TAR package content
-func validate(stream *bytes.Reader) error {
-	stream.Seek(0, io.SeekStart)
-	tarReader := tar.NewReader(stream)
-
-	for {
-		header, err := tarReader.Next()
-
-		if err == io.EOF {
-			break
-		}
-
-		if err != nil {
-			return fmt.Errorf("error parsing TAR: %s", err.Error())
-		}
-		if header.Typeflag != tar.TypeDir && header.Typeflag != tar.TypeReg {
-			return fmt.Errorf("unsupported TAR entry %d of %s", header.Typeflag, header.Name)
-		}
-
-		// check for hidden files/directories
-		if strings.HasPrefix(header.Name, ".") {
-			return fmt.Errorf("payload must not contain hidden files")
-		}
+func validate(header *tar.Header) error {
+	if header == nil {
+		return fmt.Errorf("invalid entry")
 	}
-	stream.Seek(0, io.SeekStart)
+	if header.Typeflag != tar.TypeDir && header.Typeflag != tar.TypeReg {
+		return fmt.Errorf("unsupported TAR entry %d of %s", header.Typeflag, header.Name)
+	}
+
+	// check for hidden files/directories
+	if strings.HasPrefix(header.Name, ".") {
+		return fmt.Errorf("payload must not contain hidden files and relative paths")
+	}
 	return nil
 }
 
-func extract(dest string, stream *bytes.Reader) (*Summary, error) {
-	err := validate(stream)
+func extract(dest string, stream io.Reader) (*Summary, error) {
+	// make sure 'dest' ends with a path separator
+	if !strings.HasSuffix(dest, string(os.PathSeparator)) {
+		dest += string(os.PathSeparator)
+	}
+	// make sure the destination is a directory
+	info, err := os.Stat(dest)
 	if err != nil {
 		return nil, err
 	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("path '%s' is not a directory", dest)
+	}
 
-	tarReader := tar.NewReader(stream)
+	gzReader, err := gzip.NewReader(stream)
+	if err != nil {
+		return nil, err
+	}
+	defer gzReader.Close()
+
+	tarReader := tar.NewReader(gzReader)
 	summary := Summary{}
 	log := extra.GetDefaultLog()
 
 	for true {
 		header, err := tarReader.Next()
-
 		if err == io.EOF {
 			break
 		}
-
 		if err != nil {
 			return nil, fmt.Errorf("error parsing TAR: %s", err.Error())
 		}
+		if err := validate(header); err != nil {
+			return nil, err
+		}
 
-		npath := header.Name
 		// ignore hidden files/directories
-		if strings.HasPrefix(npath, ".") {
+		if strings.HasPrefix(header.Name, ".") {
 			continue
 		}
 
+		targetPath := path.Clean(path.Join(dest, header.Name))
+		// 'dest' is guaranteed to end with a path separator
+		if !strings.HasPrefix(targetPath, dest) {
+			return nil, fmt.Errorf("TAR entry escapes destination path")
+		}
+
 		if header.Typeflag == tar.TypeDir {
-			target := path.Join(dest, npath)
-			if err := os.MkdirAll(target, directoryPermissions); err != nil {
-				return nil, fmt.Errorf("unable to create directory '%s': %s", target, err.Error())
+
+			if err := os.MkdirAll(targetPath, directoryPermissions); err != nil {
+				return nil, fmt.Errorf("unable to create directory '%s': %s", targetPath, err.Error())
 			}
 		} else {
-			log.Tracef("Inflating %s\n", npath)
-			outFile, err := os.OpenFile(path.Join(dest, npath), os.O_WRONLY|os.O_TRUNC|os.O_CREATE, filePermissions)
+			log.Tracef("Inflating %s\n", header.Name)
+			outFile, err := os.OpenFile(targetPath, os.O_WRONLY|os.O_TRUNC|os.O_CREATE, filePermissions)
 			if err != nil {
-				return nil, fmt.Errorf("unable to create file %s: %s", npath, err.Error())
+				return nil, fmt.Errorf("unable to create file %s: %s", header.Name, err.Error())
 			}
 			size, err := io.Copy(outFile, tarReader)
 			outFile.Close()
 			if err != nil {
-				return nil, fmt.Errorf("unable to copy data to %s: %s", npath, err.Error())
+				return nil, fmt.Errorf("unable to copy data to %s: %s", header.Name, err.Error())
 			}
 			summary.Count++
 			summary.Size += size
 
 			// if we have an index file not completely in lower case
 			// we should copy the file (do not use links to avoid security
-			// problems while serving with nginx or httpd)
-			name := path.Base(npath)
+			// problems while serving)
+			name := path.Base(targetPath)
 			if strings.ToLower(name) == "index.html" && name != "index.html" {
-				lpath := path.Join(path.Dir(npath), "index.html")
-				log.Tracef("Copying %s to %s\n", npath, lpath)
-				copy_file(path.Join(dest, npath), path.Join(dest, lpath))
+				lpath := path.Join(path.Dir(targetPath), "index.html")
+				log.Tracef("Copying %s to %s\n", targetPath, lpath)
+				_, err := copyFile(targetPath, lpath)
+				if err != nil {
+					if !os.IsExist(err) {
+						return nil, err
+					}
+				}
 			}
 		}
 	}
 	return &summary, nil
 }
 
-func copy_file(in, out string) (int64, error) {
+// Copy a file to a destination if the destination do not exists yet.
+func copyFile(in, out string) (int64, error) {
 	i, e := os.Open(in)
 	if e != nil {
 		return 0, e
 	}
 	defer i.Close()
-	o, e := os.Create(out)
+	o, e := os.OpenFile(out, os.O_WRONLY|os.O_CREATE|os.O_EXCL, filePermissions)
 	if e != nil {
 		return 0, e
 	}

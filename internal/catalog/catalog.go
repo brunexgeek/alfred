@@ -23,7 +23,7 @@ type Environment struct {
 
 type Parameters struct {
 	Name      string            `json:"name"`
-	Path      string            `json:"path"`
+	Path      string            `json:"path"` // guaranteed to end with a path separator
 	Templates Templates         `json:"templates"`
 	Strings   map[string]string `json:"strings"`
 }
@@ -65,6 +65,9 @@ type Publication struct {
 }
 
 func NewEnvironment(params *Parameters) *Environment {
+	if !strings.HasSuffix(params.Path, string(os.PathSeparator)) {
+		params.Path += string(os.PathSeparator)
+	}
 	return &Environment{
 		Parameters: params,
 		root: Entry{

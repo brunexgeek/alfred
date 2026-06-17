@@ -5,9 +5,6 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
-	"io"
-	"mime"
-	"mime/multipart"
 	"net/http"
 	"os"
 	"os/signal"
@@ -29,7 +26,8 @@ const REMOTE_USER = "X-Remote-User"
 //go:embed web/bootstrap.min.css
 var resources embed.FS
 
-const max_upload_size = 10 * 1024 * 1024
+// TODO make it configurable
+const max_upload_size = 15 * 1024 * 1024
 
 const server_version = "Alfred 1.0"
 const PUBLISH_ENDPOINT = "/v1/publish"
@@ -119,38 +117,6 @@ type Part struct {
 	Name        string
 	ContentType string
 	Data        []byte
-}
-
-func extract_parts(r *http.Request) (map[string]Part, error) {
-	if r.Method != "POST" {
-		return nil, fmt.Errorf("unsupported method")
-	}
-
-	mtype, params, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
-	if err != nil || !strings.HasPrefix(mtype, "multipart/") {
-		return nil, fmt.Errorf("expected multipart data")
-	}
-
-	parts := make(map[string]Part, 0)
-	reader := multipart.NewReader(r.Body, params["boundary"])
-	for {
-		p, err := reader.NextPart()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return nil, err
-		}
-		data, err := extra.ReadAll(p, max_upload_size)
-		if err != nil {
-			return nil, err
-		}
-		parts[p.FormName()] = Part{
-			Name:        p.FormName(),
-			ContentType: p.Header.Get("Content-Type"),
-			Data:        data}
-	}
-	return parts, nil
 }
 
 type PublishRequest struct {
