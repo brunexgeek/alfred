@@ -26,28 +26,19 @@ const REMOTE_USER = "X-Remote-User"
 //go:embed web/bootstrap.min.css
 var resources embed.FS
 
-// TODO make it configurable
-const max_upload_size = 15 * 1024 * 1024
-
-const server_version = "Alfred 1.0"
-const PUBLISH_ENDPOINT = "/v1/publish"
-const ENUMERATE_ENDPOINT = "/v1/enumerate"
-const ENVIRONMENTS_ENDPOINT = "/v1/environments"
+const server_name = "Alfred"
 const WEB_ENDPOINT = "/web"
 
+// used to control the critical region of updating indices
 var indexPending int32 = 0
 
-type ErrorInfo struct {
-	Message string `json:"message"`
-}
+var environments = make(map[string]*EnvironmentEntry)
 
 type EnvironmentEntry struct {
 	Environment *catalog.Environment
 	Permissions Permissions
 	Users       map[string]Permissions
 }
-
-var environments = make(map[string]*EnvironmentEntry)
 
 func (env *EnvironmentEntry) CheckPermission(user string, method string) error {
 	// ignore users whose name are invalid/unsafe
@@ -80,7 +71,7 @@ func (env *EnvironmentEntry) CheckPermission(user string, method string) error {
 	return nil
 }
 
-func write_json(obj any, w http.ResponseWriter) error {
+func writeJson(obj any, w http.ResponseWriter) error {
 	data, err := json.Marshal(obj)
 	if err != nil {
 		return err
@@ -89,51 +80,22 @@ func write_json(obj any, w http.ResponseWriter) error {
 	return nil
 }
 
-func send_object(status int, obj any, w http.ResponseWriter) error {
-	w.Header().Set("Server", server_version)
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	return write_json(obj, w)
-}
+func sendError(status int, message string, w http.ResponseWriter) {
+	type ErrorInfo struct {
+		Message string `json:"message"`
+	}
 
-func send_empty(status int, w http.ResponseWriter) {
-	w.Header().Set("Server", server_version)
-	w.Header().Add("Content-Length", "0")
-	w.WriteHeader(status)
-}
-
-func send_error(status int, message string, w http.ResponseWriter) {
 	data, err := json.Marshal(ErrorInfo{Message: message})
 	if err != nil {
 		data = make([]byte, 0)
 	}
-	w.Header().Set("Server", server_version)
+	w.Header().Set("Server", server_name)
 	http.Error(w, string(data), status)
 
 	extra.GetDefaultLog().Errorf("HTTP %d - %s", status, message)
 }
 
-type Part struct {
-	Name        string
-	ContentType string
-	Data        []byte
-}
-
-type PublishRequest struct {
-	Environment string `json:"env"`
-	Product     string `json:"prod"`
-	Title       string `json:"title"`
-	Version     string `json:"ver"`
-	Format      string `json:"fmt"`
-	Language    string `json:"lang"`
-}
-
-type ResourceReference struct {
-	catalog.Publication
-	Environment string
-}
-
-func parse_resource_ref(path string) ([]string, error) {
+func parseResource(path string) ([]string, error) {
 	parts := strings.Split(strings.Trim(path, "/"), "/")
 	length := len(parts)
 	if length == 0 {
@@ -174,22 +136,22 @@ func updateIndices(env *catalog.Environment) {
 	}
 }
 
-func publish_handler(w http.ResponseWriter, r *http.Request) {
+func publishHandler(w http.ResponseWriter, r *http.Request) {
 	log := extra.GetDefaultLog()
 
 	// parse and validate the resource path
-	resource, err := parse_resource_ref(r.URL.Path)
+	resource, err := parseResource(r.URL.Path)
 	if err != nil {
-		send_error(400, err.Error(), w)
+		sendError(400, err.Error(), w)
 		return
 	}
 	if len(resource) != 5 {
-		send_error(400, "incomplete resource name", w)
+		sendError(400, "incomplete resource name", w)
 		return
 	}
 
 	if strings.ToLower(r.Header.Get("Content-Type")) != UPLOAD_MIME_TYPE {
-		send_error(400, fmt.Sprintf("invalid content type; expected '%s'", UPLOAD_MIME_TYPE), w)
+		sendError(400, fmt.Sprintf("invalid content type; expected '%s'", UPLOAD_MIME_TYPE), w)
 		return
 	}
 	content := r.Body
@@ -205,18 +167,18 @@ func publish_handler(w http.ResponseWriter, r *http.Request) {
 
 	env, ok := environments[resource[0]]
 	if !ok {
-		send_error(404, "environment not found", w)
+		sendError(404, "environment not found", w)
 		return
 	}
 	if err := env.CheckPermission(r.Header.Get(REMOTE_USER), http.MethodPut); err != nil {
-		send_error(403, err.Error(), w)
+		sendError(403, err.Error(), w)
 		return
 	}
 
 	// publish the resource
 	summary, err := publisher.Publish(env.Environment.Parameters.Path, &pub, content)
 	if err != nil {
-		send_error(400, err.Error(), w)
+		sendError(400, err.Error(), w)
 		return
 	}
 
@@ -235,67 +197,72 @@ func publish_handler(w http.ResponseWriter, r *http.Request) {
 
 	log.Infof("Published %s", pub.DataPath())
 
-	send_object(http.StatusOK, result, w)
+	w.Header().Set("Server", server_name)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	writeJson(result, w)
 }
 
-func remove_handler(w http.ResponseWriter, r *http.Request) {
+func removeHandler(w http.ResponseWriter, r *http.Request) {
 	log := extra.GetDefaultLog()
 
-	resource, err := parse_resource_ref(r.URL.Path)
+	resource, err := parseResource(r.URL.Path)
 	if err != nil {
-		send_error(400, err.Error(), w)
+		sendError(400, err.Error(), w)
 		return
 	}
 
 	env, ok := environments[resource[0]]
 	if !ok {
-		send_error(404, "environment not found", w)
+		sendError(404, "environment not found", w)
 		return
 	}
 	if err := env.CheckPermission(r.Header.Get(REMOTE_USER), http.MethodDelete); err != nil {
-		send_error(403, err.Error(), w)
+		sendError(403, err.Error(), w)
 		return
 	}
 
 	entry, err := env.Environment.DeletePublication(resource)
 	if err != nil {
-		send_error(400, err.Error(), w)
+		sendError(400, err.Error(), w)
 		return
 	}
 	log.Infof("Removed publication '%s'", entry.Path)
 	// update index pages if an update is not in progress
 	updateIndices(env.Environment)
 
-	send_empty(200, w)
+	w.Header().Set("Server", server_name)
+	w.Header().Add("Content-Length", "0")
+	w.WriteHeader(200)
 }
 
-func metadata_handler(w http.ResponseWriter, r *http.Request) {
+func metadataHandler(w http.ResponseWriter, r *http.Request) {
 	log := extra.GetDefaultLog()
 
-	resource, err := parse_resource_ref(r.URL.Path)
+	resource, err := parseResource(r.URL.Path)
 	if err != nil {
-		send_error(400, err.Error(), w)
+		sendError(400, err.Error(), w)
 		return
 	}
 
 	env, ok := environments[resource[0]]
 	if !ok {
-		send_error(404, "environment not found", w)
+		sendError(404, "environment not found", w)
 		return
 	}
 	if err := env.CheckPermission(r.Header.Get(REMOTE_USER), http.MethodGet); err != nil {
-		send_error(403, err.Error(), w)
+		sendError(403, err.Error(), w)
 		return
 	}
 
 	content, err := env.Environment.GetPublication(resource)
 	if err != nil {
-		send_error(400, err.Error(), w)
+		sendError(400, err.Error(), w)
 		return
 	}
 	log.Infof("Retrieved publication '%s'", r.URL.Path)
 
-	w.Header().Set("Server", server_version)
+	w.Header().Set("Server", server_name)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(200)
 	w.Write(content)
@@ -305,7 +272,7 @@ var server_done = make(chan int)
 var servers []*http.Server = make([]*http.Server, 0)
 var killme = false
 
-func install_signal_hook() {
+func installSignalHook() {
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt)
 	go func() {
@@ -332,29 +299,29 @@ func default_config() (string, error) {
 	return cpath, nil
 }
 
-func load_configuration(cpath string) (*Config, error) {
+func loadConfiguration(cpath string) (*Config, error) {
 	extra.GetDefaultLog().Infof("Loading configuration from '%s'\n", cpath)
 	return OpenConfiguration(cpath)
 }
 
 func dispatcher(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPut {
-		publish_handler(w, r)
+		publishHandler(w, r)
 		return
 	}
 	if r.Method == http.MethodDelete {
-		remove_handler(w, r)
+		removeHandler(w, r)
 		return
 	}
 	if r.Method == http.MethodGet {
-		metadata_handler(w, r)
+		metadataHandler(w, r)
 		return
 	}
-	send_error(405, "method not allowed", w)
+	sendError(405, "method not allowed", w)
 }
 
 func main() {
-	install_signal_hook()
+	installSignalHook()
 	log := extra.GetDefaultLog()
 
 	log.Infof("Alfred %s\n", ALFRED_VERSION)
@@ -371,7 +338,7 @@ func main() {
 		cpath = os.Args[1]
 	}
 
-	config, err := load_configuration(cpath)
+	config, err := loadConfiguration(cpath)
 	if err != nil {
 		log.Error(err)
 		os.Exit(1)
@@ -380,7 +347,7 @@ func main() {
 	log = extra.NewLogger()
 
 	for _, entry := range config.Environments {
-		environment := catalog.NewEnvironment(&entry.Parameters)
+		environment, err := catalog.NewEnvironment(entry.Parameters)
 		if err != nil {
 			log.Error(err)
 			os.Exit(1)

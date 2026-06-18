@@ -17,7 +17,7 @@ var name_re, _ = regexp.Compile(`^([a-z][a-z0-9_\-]{0,31})$`)
 
 type Environment struct {
 	mutex      sync.Mutex
-	Parameters *Parameters
+	Parameters Parameters
 	root       Entry
 }
 
@@ -56,53 +56,6 @@ type Entry struct {
 	Type     EntryType
 }
 
-type Publication struct {
-	Product  string  // unique product name (lowercase)
-	Version  Version // complete semantic version
-	Format   FormatCode
-	Language LanguageCode
-	Date     time.Time
-}
-
-func NewEnvironment(params *Parameters) *Environment {
-	if !strings.HasSuffix(params.Path, string(os.PathSeparator)) {
-		params.Path += string(os.PathSeparator)
-	}
-	return &Environment{
-		Parameters: params,
-		root: Entry{
-			Path:     params.Path,
-			Children: make(map[string]*Entry),
-			Type:     TypeEnvironment,
-			Tainted:  true,
-		},
-	}
-}
-
-func IsValidName(name string) bool {
-	return name_re != nil && name_re.MatchString(name)
-}
-
-func (p Publication) Validate() error {
-	if name_re == nil || !name_re.MatchString(p.Product) {
-		return fmt.Errorf("invalid product name")
-	}
-	if !p.Language.IsValid() {
-		return fmt.Errorf("unsupported language")
-	}
-	if !p.Format.IsValid() {
-		return fmt.Errorf("unsupported format")
-	}
-	if !p.Version.HasVersion() {
-		return fmt.Errorf("missing version number")
-	}
-	return nil
-}
-
-func (p *Publication) DataPath() string {
-	return "/" + path.Join(p.Product, string(p.Language), p.Version.ToString(), string(p.Format))
-}
-
 func (e *Entry) AppendChild(item *Entry) {
 	item.Path = path.Join(e.Path, item.Id)
 	item.Parent = e
@@ -117,6 +70,33 @@ func (e *Entry) AppendChild(item *Entry) {
 	}
 	e.Tainted = true
 	e.Children[item.Id] = item
+}
+
+func NewEnvironment(params Parameters) (*Environment, error) {
+	if !strings.HasSuffix(params.Path, string(os.PathSeparator)) {
+		params.Path += string(os.PathSeparator)
+	}
+	// validate environment's name
+	if !IsValidName(params.Name) {
+		return nil, fmt.Errorf("invalid environment name")
+	}
+	// validate environment's path
+	info, err := os.Stat(params.Path)
+	if err != nil {
+		return nil, fmt.Errorf("unable to stat path '%s' for environment '%s'", params.Path, params.Name)
+	} else if !info.IsDir() {
+		return nil, fmt.Errorf("'%s' must be a regular directory", params.Path)
+	}
+
+	return &Environment{
+		Parameters: params,
+		root: Entry{
+			Path:     params.Path,
+			Children: make(map[string]*Entry),
+			Type:     TypeEnvironment,
+			Tainted:  true,
+		},
+	}, nil
 }
 
 func (c *Environment) AddPublication(pub *Publication) error {
@@ -202,7 +182,7 @@ func (c *Environment) ScanEnvironment(basePath string) {
 	now := time.Now()
 
 	// for each product
-	for _, entry := range read_directory(basePath) {
+	for _, entry := range enumerateDirectory(basePath) {
 		product := entry.Name()
 		if !entry.IsDir() || !name_re.MatchString(product) || isRemoved(entry, basePath) {
 			continue
@@ -210,7 +190,7 @@ func (c *Environment) ScanEnvironment(basePath string) {
 
 		// for each language
 		root := path.Join(basePath, product)
-		for _, entry := range read_directory(root) {
+		for _, entry := range enumerateDirectory(root) {
 			language := LanguageCode(entry.Name())
 			if !entry.IsDir() || !language.IsValid() || isRemoved(entry, root) {
 				continue
@@ -218,7 +198,7 @@ func (c *Environment) ScanEnvironment(basePath string) {
 
 			// for each version
 			root := path.Join(root, entry.Name())
-			for _, entry := range read_directory(root) {
+			for _, entry := range enumerateDirectory(root) {
 				version, err := ParseVersion(entry.Name())
 				if !entry.IsDir() || err != nil || !version.HasVersion() || isRemoved(entry, root) {
 					continue
@@ -226,7 +206,7 @@ func (c *Environment) ScanEnvironment(basePath string) {
 
 				// for each format
 				root := path.Join(root, entry.Name())
-				for _, entry := range read_directory(root) {
+				for _, entry := range enumerateDirectory(root) {
 					format := FormatCode(entry.Name())
 					if !entry.IsDir() || !format.IsValid() || isRemoved(entry, root) {
 						continue
@@ -350,7 +330,7 @@ func treefy(entry *Entry, prevPath string, prevNormalPath string) *MenuItem {
 	return root
 }
 
-func generateTreeItems(entry *Entry) []*MenuItem {
+func generateTree(entry *Entry) []*MenuItem {
 	items := treefy(entry, "", "").Children
 	return items
 }
@@ -358,7 +338,7 @@ func generateTreeItems(entry *Entry) []*MenuItem {
 func (c *Environment) updateWebIndex(entry *Entry) error {
 	if entry.Tainted {
 		context := Context{
-			Items:     generateTreeItems(entry),
+			Items:     generateTree(entry),
 			PageTitle: c.Parameters.Translate("page_" + string(entry.Type)),
 			PageType:  string(entry.Type),
 			Strings:   StringMap{&c.Parameters.Strings},
@@ -376,12 +356,10 @@ func (c *Environment) updateWebIndex(entry *Entry) error {
 			tpath = c.Parameters.Templates.Formats
 		}
 
-		err := generateIndexPage(&context, entry.Path, tpath)
-		if err != nil {
+		if err := generateIndexPage(&context, entry.Path, tpath); err != nil {
 			return err
 		}
-		err = generateMetadata(&context, entry.Path)
-		if err != nil {
+		if err := generateMetadata(&context, entry.Path); err != nil {
 			return err
 		}
 
@@ -411,10 +389,15 @@ func (p *Parameters) Translate(expr string) string {
 	return output
 }
 
-func read_directory(root string) []os.DirEntry {
+func enumerateDirectory(root string) []os.DirEntry {
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		return []os.DirEntry{}
 	}
 	return entries
+}
+
+// Accept a letter followed by letters, numbers, underlines and dashes
+func IsValidName(name string) bool {
+	return name_re != nil && name_re.MatchString(name)
 }

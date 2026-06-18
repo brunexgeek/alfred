@@ -71,7 +71,7 @@ func OpenConfiguration(fpath string) (*Config, error) {
 	return validate_and_return(fpath, output)
 }
 
-func make_absolute(fpath string, root string) (string, error) {
+func makeAbsolute(fpath string, root string) (string, error) {
 	if len(fpath) == 0 {
 		return "", nil
 	}
@@ -111,28 +111,23 @@ func validate_and_return(cpath string, config *Config) (*Config, error) {
 		if len(env.Path) == 0 {
 			return nil, fmt.Errorf("missing path for environment '%s'", env.Name)
 		}
-		info, err := os.Stat(env.Path)
-		if err != nil {
-			return nil, fmt.Errorf("unable to stat path (%s) for environment '%s'", env.Path, env.Name)
-		} else if !info.IsDir() {
-			return nil, fmt.Errorf("'%s' must be a regular directory", env.Path)
-		}
 
 		// validate HTML templates
 		root := path.Dir(cpath)
-		env.Templates.Products, err = make_absolute(env.Templates.Products, root)
+		var err error
+		env.Templates.Products, err = makeAbsolute(env.Templates.Products, root)
 		if err != nil {
 			return nil, err
 		}
-		env.Templates.Languages, err = make_absolute(env.Templates.Languages, root)
+		env.Templates.Languages, err = makeAbsolute(env.Templates.Languages, root)
 		if err != nil {
 			return nil, err
 		}
-		env.Templates.Versions, err = make_absolute(env.Templates.Versions, root)
+		env.Templates.Versions, err = makeAbsolute(env.Templates.Versions, root)
 		if err != nil {
 			return nil, err
 		}
-		env.Templates.Formats, err = make_absolute(env.Templates.Formats, root)
+		env.Templates.Formats, err = makeAbsolute(env.Templates.Formats, root)
 		if err != nil {
 			return nil, err
 		}
