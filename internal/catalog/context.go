@@ -56,8 +56,11 @@ func generateIndexPage(context *Context, basePath string, tpath string) error {
 	const PAGE_HEADER = `<!DOCTYPE html><html><head><title>%s</title><meta charset="utf-8"></head><body><h1>%s</h1><ul>`
 	output.WriteString(fmt.Sprintf(PAGE_HEADER, context.PageTitle, context.PageTitle))
 
+	const PAGE_ITEM = "<li><a href='%s'>%s</a></li>"
+	if context.PageType != string(TypeEnvironment) {
+		output.WriteString(fmt.Sprintf(PAGE_ITEM, "..", context.Strings.Get("[Back]")))
+	}
 	for _, item := range context.Items {
-		const PAGE_ITEM = "<li><a href='%s'>%s</a></li>"
 		output.WriteString(fmt.Sprintf(PAGE_ITEM, item.Path, item.Title))
 	}
 
