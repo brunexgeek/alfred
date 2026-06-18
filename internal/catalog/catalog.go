@@ -251,16 +251,28 @@ func (c *Environment) DeletePublication(resource []string) (*Entry, error) {
 		}
 	}
 
-	// sanity check
-	if !strings.HasPrefix(entry.Path, c.Parameters.Path) {
-		return nil, fmt.Errorf("resource path inconsistence")
+	log := extra.GetDefaultLog()
+
+	// remove the current node and purge every parent with no children
+	p := entry
+	for p != nil && p.Parent != nil {
+		// sanity check
+		if !strings.HasPrefix(p.Path, c.Parameters.Path) {
+			return nil, fmt.Errorf("resource path inconsistence")
+		}
+		log.Debugf("Removing directory '%s'", p.Path)
+		err := os.RemoveAll(p.Path)
+		if err != nil {
+			return nil, err
+		}
+
+		delete(p.Parent.Children, p.Id)
+		p.Parent.Tainted = true
+		if len(p.Parent.Children) > 0 {
+			break
+		}
+		p = p.Parent
 	}
-	err := os.RemoveAll(entry.Path)
-	if err != nil {
-		return nil, err
-	}
-	delete(entry.Parent.Children, entry.Id)
-	entry.Parent.Tainted = true
 
 	return entry, nil
 }
