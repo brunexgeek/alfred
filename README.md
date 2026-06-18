@@ -86,7 +86,7 @@ To run Alfred in your host machine, use:
 To run using Docker, use something like the following. Keep in mind that you need to match the Docker mappings to the paths you specified in the `config.json`. The following example assumes there's the environment `env1` at `/docs/env1`.
 
 ```bash
-docker run --rm -v ~/docs/env1:/docs/env -v ~/config.json:/opt/config.json brunexgeek/alfred:0.1.0
+docker run --rm -v ~/docs/env1:/docs/env -v ~/config.json:/opt/config.json brunexgeek/alfred:0.2.0
 ```
 
 ## Content management
@@ -120,9 +120,9 @@ Example:
 
 ```shell
 # retrieve metadata about versions of the product tifa in japanese
-curl -X DELETE 127.0.0.1:7000/production/tifa/jp
+curl http://127.0.0.1:7000/production/tifa/jp
 # retrieve metadata about languages of the product 'yuffie'
-curl -X DELETE 127.0.0.1:7000/production/yuffie/
+curl http://127.0.0.1:7000/production/yuffie/
 ```
 
 ### Publish documentation
@@ -136,8 +136,8 @@ Publish a documentation in the specified resource. The full resource path must b
 Example:
 
 ```shell
-# add Portuguese HTML content for product lulu, version 1.2.1
-curl -X PUT 127.0.0.1:7000/production/lulu/pt/1.2.1/html -H 'Content-Type: application/gzip' --data-binary  @package.tar.gz
+# add Portuguese HTML content for product 'lulu', version 1.2.1-zodiac
+curl -X PUT http://127.0.0.1:7000/production/lulu/pt/1.2.1-zodiac/html -H 'Content-Type: application/gzip' --data-binary  @package.tar.gz
 ```
 
 ### Delete documentation
@@ -154,11 +154,13 @@ Published a documentation in the specified resource. At least the environment an
 Example:
 
 ```shell
-# remove all versions of the product fran in japanese
-curl -X DELETE 127.0.0.1:7000/production/fran/jp
-# remove everything under the product 'ashelia'
-curl -X DELETE 127.0.0.1:7000/production/ashelia/en/1.1.2
+# remove all versions of the product 'fran' in japanese
+curl -X DELETE http://127.0.0.1:7000/production/fran/jp
+# remove product 'ashelia'
+curl -X DELETE http://127.0.0.1:7000/production/ashelia
 ```
+
+When a level is removed, the parent level is also removed if there are no more child levels.
 
 ## License
 

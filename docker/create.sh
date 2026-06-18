@@ -9,6 +9,6 @@ if docker ps 2>&1 | grep -q "/var/run/docker.sock"; then
 fi
 
 ${SUDO_PREFIX} docker build --rm \
-    -t brunexgeek/alfred:0.1.0 \
+    -t brunexgeek/alfred:0.2.0 \
     -f ${SDIR}/docker/deploy/Dockerfile \
     ${SDIR}

@@ -1,3 +1,3 @@
 package main
 
-const ALFRED_VERSION = "0.1.0"
+const ALFRED_VERSION = "0.2.0"
